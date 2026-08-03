@@ -8,49 +8,43 @@ Decision / catalog: [Klin issue 061](https://github.com/MrHIDEn/klin/blob/main/i
 
 ## Status
 
-| Chip | Pin API | Example |
-|---|---|---|
-| **RP2040** | `pin_out` / `pin_in` | `examples/blink_pico` (GPIO 25) |
-| **RP2350** (Arm) | `pin_out_rp2350` / `pin_in_rp2350` | `examples/blink_pico2` (GPIO 25) |
+| Chip | Pin API | Example | Toolchain |
+|---|---|---|---|
+| **RP2040** | `pin_out` / `pin_in` | `examples/blink_pico` | `arm-none-eabi-gcc` (M0+) |
+| **RP2350 Arm** | `pin_out_rp2350` / `pin_in_rp2350` | `examples/blink_pico2` | `arm-none-eabi-gcc` (M33) |
+| **RP2350 RISC-V** | same `pin_out_rp2350` | `examples/blink_pico2_riscv` | `riscv64-unknown-elf-gcc` `-march=rv32imac` |
 
-| API | Status |
-|---|---|
-| `Pin` high/low/toggle/set/value | MVP |
-| `Pwm`, `Uart`, … | later |
-
-RP2040 and RP2350 use **different** MMIO maps (RESETS / IO_BANK0 / SIO offsets). Call the matching constructor for your chip.
+RP2040 vs RP2350 use **different** MMIO maps. RP2350 Arm and RISC-V share the same peripheral map — only boot (IMAGE_DEF CPU flag) and the compiler differ.
 
 ## Requirements
 
 - [Klin](https://github.com/MrHIDEn/klin) compiler
-- `arm-none-eabi-gcc` (M0+ for Pico, M33 for Pico 2)
-- Flash: `picotool` / UF2
+- ARM examples: `arm-none-eabi-gcc`
+- RISC-V example: `gcc-riscv64-unknown-elf` (RV32 via `-march=rv32imac -mabi=ilp32`)
 
 ## Usage
 
 ```klin
 import "github/mrhiden/machine_rp" machine
 
-// Pico (RP2040)
-let led = machine.pin_out(25)
-
-// Pico 2 (RP2350 Arm)
-let led2 = machine.pin_out_rp2350(25)
+let a = machine.pin_out(25)           // RP2040
+let b = machine.pin_out_rp2350(25)    // RP2350 (Arm or RISC-V)
 ```
 
 ```sh
-klin get github/mrhiden/machine_rp@main
+klin get github/mrhiden/machine_rp@v0.3.0
 ```
 
 ## Examples
 
 ```sh
-cd examples/blink_pico    # RP2040 + boot2
-make KLIN=/path/to/klin/bin/klin.dart
-
-cd examples/blink_pico2   # RP2350 Arm + IMAGE_DEF
+cd examples/blink_pico         # RP2040
+cd examples/blink_pico2        # RP2350 Arm + IMAGE_DEF
+cd examples/blink_pico2_riscv  # RP2350 RISC-V + IMAGE_DEF
 make KLIN=/path/to/klin/bin/klin.dart
 ```
+
+Pico 2 **W**: onboard LED is not a plain GPIO — use an external LED or a non-W Pico 2 for GPIO25.
 
 ## Tests
 
@@ -62,4 +56,4 @@ dart run /path/to/klin/bin/klin.dart test machine_rp/
 
 MIT (Klin package).  
 `examples/blink_pico/boot2_w25q080.S`: BSD-3-Clause (Raspberry Pi / rp-rs).  
-`examples/blink_pico2/image_def.S`: minimum IMAGE_DEF per RP2350 datasheet §5.9.5.
+IMAGE_DEF sources: minimum block per RP2350 datasheet §5.9.5.

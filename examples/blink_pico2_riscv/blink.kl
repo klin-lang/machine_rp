@@ -1,0 +1,16 @@
+// Raspberry Pi Pico 2 — RP2350 RISC-V (Hazard3). Same Pin MMIO as Arm.
+// Onboard LED on non-W Pico 2 is GPIO 25; Pico 2 W needs an external LED.
+import "../../machine_rp" machine
+
+@[link("startup.S")]
+@[link("image_def.S")]
+fn main() {
+    let led = machine.pin_out_rp2350(25)
+    while true {
+        led.toggle()
+        let mut i: i32 = 0
+        while i < 500000 {
+            i = i + 1
+        }
+    }
+}
