@@ -1,10 +1,10 @@
 # machine_rp
 
-RP microcontroller port of a MicroPython-shaped **`machine`** API for [Klin](https://github.com/MrHIDEn/klin).
+RP microcontroller port of a MicroPython-shaped **`machine`** API for [Klin](https://github.com/klin-lang/klin).
 
 Not a MicroPython port. No GC, no hidden heap, no hidden clocks.
 
-Decision / catalog: [Klin issue 061](https://github.com/MrHIDEn/klin/blob/main/issues/061-micropython-machine-api.md), targets [062](https://github.com/MrHIDEn/klin/blob/main/issues/062-targets-esp-rp.md).
+Decision / catalog: [Klin issue 061](https://github.com/klin-lang/klin/blob/main/issues/061-micropython-machine-api.md), targets [062](https://github.com/klin-lang/klin/blob/main/issues/062-targets-esp-rp.md).
 
 ## Status
 
@@ -18,21 +18,21 @@ RP2040 vs RP2350 use **different** MMIO maps. RP2350 Arm and RISC-V share the sa
 
 ## Requirements
 
-- [Klin](https://github.com/MrHIDEn/klin) compiler
+- [Klin](https://github.com/klin-lang/klin) compiler
 - ARM examples: `arm-none-eabi-gcc`
 - RISC-V example: `gcc-riscv64-unknown-elf` (RV32 via `-march=rv32imac -mabi=ilp32`)
 
 ## Usage
 
 ```klin
-import "github/mrhiden/machine_rp" machine
+import "github/klin-lang/machine_rp" machine
 
 let a = machine.pin_out(25)           // RP2040
 let b = machine.pin_out_rp2350(25)    // RP2350 (Arm or RISC-V)
 ```
 
 ```sh
-klin get github/mrhiden/machine_rp@v0.3.0
+klin get github/klin-lang/machine_rp@v0.3.0
 ```
 
 ## Examples
