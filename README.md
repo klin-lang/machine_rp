@@ -8,60 +8,49 @@ Decision / catalog: [Klin issue 061](https://github.com/MrHIDEn/klin/blob/main/i
 
 ## Status
 
-| Chip | Status |
-|---|---|
-| **RP2040** | MVP `Pin` + Pico blink (GPIO 25) |
-| **RP2350** | later (same repo, separate example) |
+| Chip | Pin API | Example |
+|---|---|---|
+| **RP2040** | `pin_out` / `pin_in` | `examples/blink_pico` (GPIO 25) |
+| **RP2350** (Arm) | `pin_out_rp2350` / `pin_in_rp2350` | `examples/blink_pico2` (GPIO 25) |
 
 | API | Status |
 |---|---|
-| `Pin` (`pin_out` / `pin_in`, `high` / `low` / `toggle` / `set` / `value`) | MVP (RP2040 SIO) |
+| `Pin` high/low/toggle/set/value | MVP |
 | `Pwm`, `Uart`, … | later |
+
+RP2040 and RP2350 use **different** MMIO maps (RESETS / IO_BANK0 / SIO offsets). Call the matching constructor for your chip.
 
 ## Requirements
 
 - [Klin](https://github.com/MrHIDEn/klin) compiler
-- `arm-none-eabi-gcc` (Cortex-M0+)
-- Flash: `picotool` / UF2 (example builds `blink.elf`; convert as you prefer)
-
-## Layout
-
-```text
-machine_rp/              # module machine_rp
-  version.kl
-  pin.kl
-  pin_test.kl
-examples/blink_pico/     # RP2040 Pico LED GPIO25 + boot2
-```
+- `arm-none-eabi-gcc` (M0+ for Pico, M33 for Pico 2)
+- Flash: `picotool` / UF2
 
 ## Usage
 
 ```klin
 import "github/mrhiden/machine_rp" machine
 
-@[link("startup.s")]
-@[link("boot2_w25q080.S")]
-fn main() {
-    let led = machine.pin_out(25)
-    while true {
-        led.toggle()
-    }
-}
+// Pico (RP2040)
+let led = machine.pin_out(25)
+
+// Pico 2 (RP2350 Arm)
+let led2 = machine.pin_out_rp2350(25)
 ```
 
 ```sh
 klin get github/mrhiden/machine_rp@main
 ```
 
-## Blink example
+## Examples
 
 ```sh
-cd examples/blink_pico
+cd examples/blink_pico    # RP2040 + boot2
 make KLIN=/path/to/klin/bin/klin.dart
-# → blink.elf  (flash with picotool / elf2uf2)
-```
 
-Vendored `boot2_w25q080.S` is the CRC-padded RP2040 second-stage boot for W25Q080 (Pico flash), from [rp-rs/rp2040-boot2](https://github.com/rp-rs/rp2040-boot2).
+cd examples/blink_pico2   # RP2350 Arm + IMAGE_DEF
+make KLIN=/path/to/klin/bin/klin.dart
+```
 
 ## Tests
 
@@ -71,4 +60,6 @@ dart run /path/to/klin/bin/klin.dart test machine_rp/
 
 ## License
 
-MIT (Klin package). Boot2 blob: BSD-3-Clause (Raspberry Pi / rp-rs).
+MIT (Klin package).  
+`examples/blink_pico/boot2_w25q080.S`: BSD-3-Clause (Raspberry Pi / rp-rs).  
+`examples/blink_pico2/image_def.S`: minimum IMAGE_DEF per RP2350 datasheet §5.9.5.

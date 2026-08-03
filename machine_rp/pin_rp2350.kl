@@ -1,0 +1,69 @@
+// RP2350 GPIO Pin (Pico 2). Separate addresses from RP2040 — call pin_out_rp2350.
+module machine_rp
+
+fn ensure_gpio_clocks_rp2350() {
+    // RESETS atomic clear @ BASE+0x3000: IO_BANK0 (bit 6) + PADS_BANK0 (bit 9)
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = (1 << 6) | (1 << 9)
+    let done = cast(*mut volatile i32, 0x40020008)
+    let need = (1 << 6) | (1 << 9)
+    while (*done & need) != need {}
+}
+
+// Configure GPIO `num` as SIO output on RP2350 (FUNCSEL = 5). Clears pad ISO.
+pub fn pin_out_rp2350(num: i32): Pin {
+    ensure_gpio_clocks_rp2350()
+
+    // Clear pad ISO (bit 8) and OD (bit 7) via atomic-clear alias
+    let pad_clr_a = 0x4003b004 + num * 4
+    let pad_clr = cast(*mut volatile i32, pad_clr_a)
+    *pad_clr = (1 << 8) | (1 << 7)
+
+    let ctrl_a = 0x40028000 + num * 8 + 4
+    let ctrl = cast(*mut volatile i32, ctrl_a)
+    *ctrl = 5
+
+    let mask = 1 << num
+    let oe_set = cast(*mut volatile i32, 0xd0000038)
+    *oe_set = mask
+
+    let out_set = cast(*mut volatile i32, 0xd0000018)
+    let out_clr = cast(*mut volatile i32, 0xd0000020)
+    let out_xor = cast(*mut volatile i32, 0xd0000028)
+    let gpio_in = cast(*mut volatile i32, 0xd0000004)
+    return Pin{
+        out_set: out_set,
+        out_clr: out_clr,
+        out_xor: out_xor,
+        gpio_in: gpio_in,
+        mask: mask
+    }
+}
+
+pub fn pin_in_rp2350(num: i32): Pin {
+    ensure_gpio_clocks_rp2350()
+
+    let pad_clr_a = 0x4003b004 + num * 4
+    let pad_clr = cast(*mut volatile i32, pad_clr_a)
+    *pad_clr = (1 << 8) | (1 << 7)
+
+    let ctrl_a = 0x40028000 + num * 8 + 4
+    let ctrl = cast(*mut volatile i32, ctrl_a)
+    *ctrl = 5
+
+    let mask = 1 << num
+    let oe_clr = cast(*mut volatile i32, 0xd0000040)
+    *oe_clr = mask
+
+    let out_set = cast(*mut volatile i32, 0xd0000018)
+    let out_clr = cast(*mut volatile i32, 0xd0000020)
+    let out_xor = cast(*mut volatile i32, 0xd0000028)
+    let gpio_in = cast(*mut volatile i32, 0xd0000004)
+    return Pin{
+        out_set: out_set,
+        out_clr: out_clr,
+        out_xor: out_xor,
+        gpio_in: gpio_in,
+        mask: mask
+    }
+}
