@@ -1,0 +1,27 @@
+module machine_rp
+
+import testing
+
+// Host-safe RC mapping checks (no MMIO).
+
+fn test_rc_pulse_to_duty_center() {
+    // 1500 µs @ 50 Hz (period 20000) → 1500*65536/20000 = 4915
+    testing.assert_eq_i32(rc_pulse_to_duty_u16(1500, 20000), 4915)
+}
+
+fn test_rc_pulse_to_duty_edges() {
+    testing.assert_eq_i32(rc_pulse_to_duty_u16(500, 20000), 1638)
+    testing.assert_eq_i32(rc_pulse_to_duty_u16(2500, 20000), 8192)
+}
+
+fn test_rc_pos_f32_scale() {
+    testing.assert_eq_i32(rc_pos_f32_to_100000(0.0), 0)
+    testing.assert_eq_i32(rc_pos_f32_to_100000(0.5), 50000)
+    testing.assert_eq_i32(rc_pos_f32_to_100000(1.0), 100000)
+}
+
+fn test_rc_clamp() {
+    testing.assert_eq_i32(rc_clamp_i32(-5, 0, 100000), 0)
+    testing.assert_eq_i32(rc_clamp_i32(200000, 0, 100000), 100000)
+    testing.assert_eq_i32(rc_clamp_i32(1500, 0 - 1000, 1000), 1000)
+}

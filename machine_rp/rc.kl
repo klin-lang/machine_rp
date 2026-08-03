@@ -1,0 +1,143 @@
+/// RC / hobby-servo pulse output on top of `Pwm`.
+/// Pulse width in microseconds; position 0..=100_000 (or f32 0.0..=1.0).
+module machine_rp
+
+pub struct Rc {
+    pwm: Pwm
+    freq_hz: i32
+    us_min: i32
+    us_max: i32
+    period_us: i32
+}
+
+fn rc_clamp_i32(v: i32, lo: i32, hi: i32): i32 {
+    if v < lo {
+        return lo
+    }
+    if v > hi {
+        return hi
+    }
+    return v
+}
+
+fn rc_i32_to_f32(n: i32): f32 {
+    if n == 0 {
+        return 0.0
+    }
+    if n < 0 {
+        return -(rc_i32_to_f32(0 - n))
+    }
+    let mut f: f32 = 0.0
+    let mut v = n
+    let mut bit: f32 = 1.0
+    while v > 0 {
+        if (v & 1) != 0 {
+            f = f + bit
+        }
+        v = v >> 1
+        bit = bit + bit
+    }
+    return f
+}
+
+fn rc_pos_f32_to_100000(pos: f32): i32 {
+    let mut p = pos
+    if p < 0.0 {
+        p = 0.0
+    }
+    if p > 1.0 {
+        p = 1.0
+    }
+    let scaled = p * 100000.0
+    let mut lo: i32 = 0
+    let mut hi: i32 = 100000
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2
+        if rc_i32_to_f32(mid) <= scaled {
+            lo = mid
+        } else {
+            hi = mid - 1
+        }
+    }
+    return lo
+}
+
+fn rc_pulse_to_duty_u16(pulse_us: i32, period_us: i32): i32 {
+    let mut per = period_us
+    if per < 1 {
+        per = 1
+    }
+    let mut p = pulse_us
+    if p < 0 {
+        p = 0
+    }
+    if p > per {
+        p = per
+    }
+    let hi = p / per
+    let rem = p - hi * per
+    return hi * 65536 + (rem * 65536) / per
+}
+
+fn rc_from_pwm(pwm: Pwm, freq_hz: i32, us_min: i32, us_max: i32): Rc {
+    let mut f = freq_hz
+    if f < 1 {
+        f = 1
+    }
+    pwm.freq(f)
+    let period_us = 1000000 / f
+    let rc = Rc{
+        pwm: pwm,
+        freq_hz: f,
+        us_min: us_min,
+        us_max: us_max,
+        period_us: period_us
+    }
+    rc.pulse_us((us_min + us_max) / 2)
+    return rc
+}
+
+/// RP2040: same HW args as `pwm_out`, plus RC frame rate and pulse range (µs).
+pub fn rc_out(
+    num: i32,
+    sys_clk_hz: i32,
+    freq_hz: i32,
+    us_min: i32,
+    us_max: i32
+): Rc {
+    let pwm = pwm_out(num, sys_clk_hz)
+    return rc_from_pwm(pwm, freq_hz, us_min, us_max)
+}
+
+/// RP2350: same HW args as `pwm_out_rp2350`, plus RC frame / pulse range.
+pub fn rc_out_rp2350(
+    num: i32,
+    sys_clk_hz: i32,
+    freq_hz: i32,
+    us_min: i32,
+    us_max: i32
+): Rc {
+    let pwm = pwm_out_rp2350(num, sys_clk_hz)
+    return rc_from_pwm(pwm, freq_hz, us_min, us_max)
+}
+
+pub fn (r: Rc) pulse_us(us: i32) {
+    let duty = rc_pulse_to_duty_u16(us, r.period_us)
+    r.pwm.duty_u16(duty)
+}
+
+pub fn (r: Rc) out(pos: i32, k: i32) {
+    let p = rc_clamp_i32(pos, 0, 100000)
+    let trim = rc_clamp_i32(k, 0 - 1000, 1000)
+    let span = r.us_max - r.us_min
+    let us = r.us_min + (span * p) / 100000 + trim
+    r.pulse_us(us)
+}
+
+pub fn (r: Rc) out_f32(pos: f32, k: i32) {
+    r.out(rc_pos_f32_to_100000(pos), k)
+}
+
+pub fn (r: Rc) deinit() {
+    r.pwm.deinit()
+}
