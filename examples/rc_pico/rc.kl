@@ -1,0 +1,29 @@
+// Pico GPIO 25 — RC/servo sweep demo (onboard LED pin; use an external servo).
+// Freestanding ROSC ≈ 6 MHz. Typical servo: 50 Hz, 1000..=2000 µs.
+import "../../machine_rp" machine
+
+@[link("startup.s")]
+@[link("boot2_w25q080.S")]
+fn main() {
+    let servo = machine.rc_out(25, 6000000, 50, 1000, 2000)
+    while true {
+        let mut pos: i32 = 0
+        while pos <= 100000 {
+            servo.out(pos, 0)
+            let mut i: i32 = 0
+            while i < 20000 {
+                i = i + 1
+            }
+            pos = pos + 5000
+        }
+        pos = 100000
+        while pos >= 0 {
+            servo.out(pos, 0)
+            let mut i: i32 = 0
+            while i < 20000 {
+                i = i + 1
+            }
+            pos = pos - 5000
+        }
+    }
+}
