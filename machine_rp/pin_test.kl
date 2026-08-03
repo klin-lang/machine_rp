@@ -1,0 +1,9 @@
+module machine_rp
+
+import testing
+
+// Host-safe checks only (no MMIO). Skipped on package import (*_test.kl).
+
+fn test_version_is_one() {
+    testing.assert_eq_i32(version(), 1)
+}

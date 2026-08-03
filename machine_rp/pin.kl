@@ -1,0 +1,97 @@
+// RP2040 GPIO Pin via SIO + IO_BANK0 (MMIO). Explicit resets — no hidden init.
+// MVP target: RP2040 (Pico LED = GPIO 25). RP2350 later.
+module machine_rp
+
+pub struct Pin {
+    out_set: *mut volatile i32
+    out_clr: *mut volatile i32
+    out_xor: *mut volatile i32
+    gpio_in: *mut volatile i32
+    mask: i32
+}
+
+fn ensure_gpio_clocks() {
+    // RESETS atomic clear: IO_BANK0 (bit 5) + PADS_BANK0 (bit 8)
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = (1 << 5) | (1 << 8)
+    let done = cast(*mut volatile i32, 0x4000c008)
+    let need = (1 << 5) | (1 << 8)
+    while (*done & need) != need {}
+}
+
+// Configure GPIO `num` as SIO push-pull output (FUNCSEL = 5).
+pub fn pin_out(num: i32): Pin {
+    ensure_gpio_clocks()
+
+    let ctrl_a = 0x40014000 + num * 8 + 4
+    let ctrl = cast(*mut volatile i32, ctrl_a)
+    *ctrl = 5
+
+    let mask = 1 << num
+    let oe_set = cast(*mut volatile i32, 0xd0000024)
+    *oe_set = mask
+
+    let out_set = cast(*mut volatile i32, 0xd0000014)
+    let out_clr = cast(*mut volatile i32, 0xd0000018)
+    let out_xor = cast(*mut volatile i32, 0xd000001c)
+    let gpio_in = cast(*mut volatile i32, 0xd0000004)
+    return Pin{
+        out_set: out_set,
+        out_clr: out_clr,
+        out_xor: out_xor,
+        gpio_in: gpio_in,
+        mask: mask
+    }
+}
+
+// Configure GPIO `num` as SIO input (FUNCSEL = 5, OE clear).
+pub fn pin_in(num: i32): Pin {
+    ensure_gpio_clocks()
+
+    let ctrl_a = 0x40014000 + num * 8 + 4
+    let ctrl = cast(*mut volatile i32, ctrl_a)
+    *ctrl = 5
+
+    let mask = 1 << num
+    let oe_clr = cast(*mut volatile i32, 0xd0000028)
+    *oe_clr = mask
+
+    let out_set = cast(*mut volatile i32, 0xd0000014)
+    let out_clr = cast(*mut volatile i32, 0xd0000018)
+    let out_xor = cast(*mut volatile i32, 0xd000001c)
+    let gpio_in = cast(*mut volatile i32, 0xd0000004)
+    return Pin{
+        out_set: out_set,
+        out_clr: out_clr,
+        out_xor: out_xor,
+        gpio_in: gpio_in,
+        mask: mask
+    }
+}
+
+pub fn (p: Pin) high() {
+    *(p.out_set) = p.mask
+}
+
+pub fn (p: Pin) low() {
+    *(p.out_clr) = p.mask
+}
+
+pub fn (p: Pin) toggle() {
+    *(p.out_xor) = p.mask
+}
+
+pub fn (p: Pin) set(v: i32) {
+    if v != 0 {
+        p.high()
+    } else {
+        p.low()
+    }
+}
+
+pub fn (p: Pin) value(): i32 {
+    if (*(p.gpio_in) & p.mask) != 0 {
+        return 1
+    }
+    return 0
+}

@@ -1,0 +1,15 @@
+// Raspberry Pi Pico (RP2040) on-board LED = GPIO 25.
+import "../../machine_rp" machine
+
+@[link("startup.s")]
+@[link("boot2_w25q080.S")]
+fn main() {
+    let led = machine.pin_out(25)
+    while true {
+        led.toggle()
+        let mut i: i32 = 0
+        while i < 500000 {
+            i = i + 1
+        }
+    }
+}

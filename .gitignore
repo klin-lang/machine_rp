@@ -1,0 +1,8 @@
+out/
+*.elf
+*.o
+*.bin
+*.hex
+*.uf2
+.task/
+.DS_Store
