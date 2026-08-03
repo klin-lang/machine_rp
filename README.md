@@ -8,13 +8,15 @@ Decision / catalog: [Klin issue 061](https://github.com/klin-lang/klin/blob/main
 
 ## Status
 
-| Chip | Pin API | Example | Toolchain |
-|---|---|---|---|
-| **RP2040** | `pin_out` / `pin_in` | `examples/blink_pico` | `arm-none-eabi-gcc` (M0+) |
-| **RP2350 Arm** | `pin_out_rp2350` / `pin_in_rp2350` | `examples/blink_pico2` | `arm-none-eabi-gcc` (M33) |
-| **RP2350 RISC-V** | same `pin_out_rp2350` | `examples/blink_pico2_riscv` | `riscv64-unknown-elf-gcc` `-march=rv32imac` |
+| Chip | Pin | Pwm | Example | Toolchain |
+|---|---|---|---|---|
+| **RP2040** | `pin_out` / `pin_in` | `pwm_out(gpio, sys_clk_hz)` | `blink_pico`, `pwm_pico` | `arm-none-eabi-gcc` (M0+) |
+| **RP2350 Arm** | `pin_out_rp2350` / `pin_in_rp2350` | `pwm_out_rp2350` | `blink_pico2` | `arm-none-eabi-gcc` (M33) |
+| **RP2350 RISC-V** | same `pin_out_rp2350` | same `pwm_out_rp2350` | `blink_pico2_riscv` | `riscv64-unknown-elf-gcc` `-march=rv32imac` |
 
 RP2040 vs RP2350 use **different** MMIO maps. RP2350 Arm and RISC-V share the same peripheral map — only boot (IMAGE_DEF CPU flag) and the compiler differ.
+
+`version()` → `4` (`@v0.4.0`).
 
 ## Requirements
 
@@ -22,7 +24,7 @@ RP2040 vs RP2350 use **different** MMIO maps. RP2350 Arm and RISC-V share the sa
 - ARM examples: `arm-none-eabi-gcc`
 - RISC-V example: `gcc-riscv64-unknown-elf` (RV32 via `-march=rv32imac -mabi=ilp32`)
 
-## Usage
+## Usage — Pin
 
 ```klin
 import "github/klin-lang/machine_rp" machine
@@ -31,14 +33,46 @@ let a = machine.pin_out(25)           // RP2040
 let b = machine.pin_out_rp2350(25)    // RP2350 (Arm or RISC-V)
 ```
 
-```sh
-klin get github/klin-lang/machine_rp@v0.3.0
+## Usage — Pwm
+
+Same shape as [`machine_stm32`](https://github.com/klin-lang/machine_stm32): `freq` / `duty_u16` / `deinit`.
+Slice and A/B channel are derived from the GPIO number (explicit `sys_clk_hz` — no clock-tree read).
+
+```klin
+import "github/klin-lang/machine_rp" machine
+
+// GPIO 25 → slice 4 channel B. Freestanding ROSC ≈ 6 MHz; after PLL use 125_000_000.
+let led = machine.pwm_out(25, 6000000)
+led.freq(1000)
+led.duty_u16(32768)
 ```
+
+RP2350:
+
+```klin
+let led = machine.pwm_out_rp2350(25, 150000000)
+led.freq(1000)
+led.duty_u16(32768)
+```
+
+```sh
+klin get github/klin-lang/machine_rp@v0.4.0
+```
+
+## Pwm shape (shared with other `machine_*`)
+
+| Piece | Role |
+|---|---|
+| `pwm_out` / `pwm_out_rp2350` | factory — chip map differs |
+| `freq(hz)` | frequency in Hz |
+| `duty_u16(d)` | duty `0..=65535` |
+| `deinit()` | stop slice (clear CSR.EN) |
 
 ## Examples
 
 ```sh
-cd examples/blink_pico         # RP2040
+cd examples/blink_pico         # RP2040 Pin
+cd examples/pwm_pico           # RP2040 Pwm fade on GPIO 25
 cd examples/blink_pico2        # RP2350 Arm + IMAGE_DEF
 cd examples/blink_pico2_riscv  # RP2350 RISC-V + IMAGE_DEF
 make KLIN=/path/to/klin/bin/klin.dart
@@ -55,5 +89,5 @@ dart run /path/to/klin/bin/klin.dart test machine_rp/
 ## License
 
 MIT (Klin package).  
-`examples/blink_pico/boot2_w25q080.S`: BSD-3-Clause (Raspberry Pi / rp-rs).  
+`examples/blink_pico/boot2_w25q080.S` / `examples/pwm_pico/boot2_w25q080.S`: BSD-3-Clause (Raspberry Pi / rp-rs).  
 IMAGE_DEF sources: minimum block per RP2350 datasheet §5.9.5.

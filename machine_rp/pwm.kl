@@ -1,0 +1,148 @@
+/// RP2040 / RP2350 PWM slices (MMIO).
+/// Shape matches machine_stm32: freq / duty_u16 / deinit.
+/// Slice/channel come from the GPIO number — no hidden timer pick.
+/// sys_clk_hz is explicit (board/app clock tree).
+module machine_rp
+
+pub struct Pwm {
+    csr: *mut volatile i32
+    div: *mut volatile i32
+    cc: *mut volatile i32
+    top: *mut volatile i32
+    // 0 = channel A (even GPIO), 1 = channel B (odd GPIO)
+    chan: i32
+    sys_clk_hz: i32
+}
+
+fn pwm_slice_gpio(num: i32): i32 {
+    // RP2040: 8 slices. RP2350 gpio<32: same mapping ((gpio>>1)&7).
+    return (num / 2) % 8
+}
+
+fn ensure_pwm_rp2040() {
+    ensure_gpio_clocks()
+    // RESETS atomic clear: PWM bit 14
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = 1 << 14
+    let done = cast(*mut volatile i32, 0x4000c008)
+    let need = 1 << 14
+    while (*done & need) != need {}
+}
+
+fn ensure_pwm_rp2350() {
+    ensure_gpio_clocks_rp2350()
+    // RESETS atomic clear @ BASE+0x3000: PWM bit 16
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = 1 << 16
+    let done = cast(*mut volatile i32, 0x40020008)
+    let need = 1 << 16
+    while (*done & need) != need {}
+}
+
+fn pwm_from_base(pwm_base: i32, num: i32, sys_clk_hz: i32): Pwm {
+    let slice = pwm_slice_gpio(num)
+    let base = pwm_base + slice * 0x14
+    let csr = cast(*mut volatile i32, base)
+    let div = cast(*mut volatile i32, base + 0x04)
+    let cc = cast(*mut volatile i32, base + 0x0C)
+    let top = cast(*mut volatile i32, base + 0x10)
+    let chan = num & 1
+    // Free-running trailing-edge; enable after defaults.
+    *csr = 0
+    *div = 0x10
+    *top = 0
+    *cc = 0
+    let pwm = Pwm{
+        csr: csr,
+        div: div,
+        cc: cc,
+        top: top,
+        chan: chan,
+        sys_clk_hz: sys_clk_hz
+    }
+    pwm.freq(1000)
+    pwm.duty_u16(0)
+    *csr = 1
+    return pwm
+}
+
+/// RP2040: GPIO `num` → PWM FUNCSEL 4. `sys_clk_hz` = clk_sys (explicit).
+pub fn pwm_out(num: i32, sys_clk_hz: i32): Pwm {
+    ensure_pwm_rp2040()
+    let ctrl_a = 0x40014000 + num * 8 + 4
+    let ctrl = cast(*mut volatile i32, ctrl_a)
+    *ctrl = 4
+    return pwm_from_base(0x40050000, num, sys_clk_hz)
+}
+
+/// RP2350: GPIO `num` → PWM FUNCSEL 4. Clears pad ISO/OD. Same Pwm methods.
+pub fn pwm_out_rp2350(num: i32, sys_clk_hz: i32): Pwm {
+    ensure_pwm_rp2350()
+    let pad_clr_a = 0x4003b004 + num * 4
+    let pad_clr = cast(*mut volatile i32, pad_clr_a)
+    *pad_clr = (1 << 8) | (1 << 7)
+    let ctrl_a = 0x40028000 + num * 8 + 4
+    let ctrl = cast(*mut volatile i32, ctrl_a)
+    *ctrl = 4
+    return pwm_from_base(0x400a8000, num, sys_clk_hz)
+}
+
+/// Set PWM frequency in Hz using `sys_clk_hz` from the factory (no clock read).
+pub fn (p: Pwm) freq(hz: i32) {
+    let mut f = hz
+    if f < 1 {
+        f = 1
+    }
+    let mut clk = p.sys_clk_hz
+    if clk < 1 {
+        clk = 1
+    }
+    let mut div_int: i32 = 1
+    let mut top_v = clk / f - 1
+    while top_v > 65535 {
+        div_int = div_int + 1
+        if div_int > 255 {
+            div_int = 255
+            top_v = clk / (div_int * f) - 1
+            if top_v > 65535 {
+                top_v = 65535
+            }
+            break
+        }
+        top_v = clk / (div_int * f) - 1
+    }
+    if top_v < 0 {
+        top_v = 0
+    }
+    // DIV: INT in bits 11:4, FRAC in 3:0 — integer divide only for MVP.
+    *(p.div) = div_int << 4
+    *(p.top) = top_v
+}
+
+/// Duty cycle: 0 = off, 65535 ≈ full on (MicroPython-style).
+pub fn (p: Pwm) duty_u16(duty: i32) {
+    let mut d = duty
+    if d < 0 {
+        d = 0
+    }
+    if d > 65535 {
+        d = 65535
+    }
+    let top_v = *(p.top)
+    let mut level = (d * (top_v + 1)) / 65536
+    if level > top_v {
+        level = top_v
+    }
+    let cur = *(p.cc)
+    if p.chan == 0 {
+        // 0xFFFF0000 as i32 two's complement
+        *(p.cc) = (cur & (0 - 65536)) | level
+    } else {
+        *(p.cc) = (cur & 65535) | (level << 16)
+    }
+}
+
+/// Stop this slice (clears CSR.EN). Does not restore GPIO FUNCSEL.
+pub fn (p: Pwm) deinit() {
+    *(p.csr) = 0
+}
