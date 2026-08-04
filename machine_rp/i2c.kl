@@ -1,0 +1,190 @@
+/// RP2040 / RP2350 I2C controller (DW_apb_i2c MMIO).
+/// `sys_clk_hz` explicit; 7-bit addresses; blocking transfers.
+module machine_rp
+
+pub struct I2c {
+    tar: *mut volatile i32
+    data_cmd: *mut volatile i32
+    enable: *mut volatile i32
+    status: *mut volatile i32
+}
+
+fn i2c_base_rp2040(i2c: i32): i32 {
+    if i2c == 1 {
+        return 0x40048000
+    }
+    return 0x40044000
+}
+
+fn i2c_base_rp2350(i2c: i32): i32 {
+    if i2c == 1 {
+        return 0x40098000
+    }
+    return 0x40090000
+}
+
+fn i2c_period_counts(sys_clk_hz: i32, freq_hz: i32, numer: i32, denom: i32): i32 {
+    let mut clk = sys_clk_hz
+    if clk < 1 {
+        clk = 1
+    }
+    let mut f = freq_hz
+    if f < 1 {
+        f = 1
+    }
+    let mut c = (clk * numer) / (f * denom)
+    if c < 8 {
+        c = 8
+    }
+    return c
+}
+
+fn ensure_i2c_rp2040(i2c: i32) {
+    ensure_gpio_clocks()
+    let mut b = 3
+    if i2c == 1 {
+        b = 4
+    }
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x4000c008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn ensure_i2c_rp2350(i2c: i32) {
+    ensure_gpio_clocks_rp2350()
+    let mut b = 4
+    if i2c == 1 {
+        b = 5
+    }
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x40020008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn pad_i2c_rp2040(num: i32) {
+    let pad = cast(*mut volatile i32, 0x4001c004 + num * 4)
+    *pad = (1 << 6) | (3 << 4) | (1 << 3) | (1 << 1)
+    gpio_func_rp2040(num, 3)
+}
+
+fn pad_i2c_rp2350(num: i32) {
+    let pad = cast(*mut volatile i32, 0x40038004 + num * 4)
+    *pad = (1 << 6) | (3 << 4) | (1 << 3) | (1 << 1)
+    gpio_func_rp2350(num, 3)
+}
+
+fn i2c_from_base(base: i32, sys_clk_hz: i32, freq_hz: i32): I2c {
+    let con = cast(*mut volatile i32, base)
+    let tar = cast(*mut volatile i32, base + 0x04)
+    let data_cmd = cast(*mut volatile i32, base + 0x10)
+    let ss_hcnt = cast(*mut volatile i32, base + 0x14)
+    let ss_lcnt = cast(*mut volatile i32, base + 0x18)
+    let fs_hcnt = cast(*mut volatile i32, base + 0x1C)
+    let fs_lcnt = cast(*mut volatile i32, base + 0x20)
+    let enable = cast(*mut volatile i32, base + 0x6C)
+    let status = cast(*mut volatile i32, base + 0x70)
+
+    *enable = 0
+    let mut speed = 1
+    if freq_hz > 100000 {
+        speed = 2
+    }
+    // MASTER_MODE | IC_SLAVE_DISABLE | IC_RESTART_EN | SPEED
+    *con = 1 | (1 << 6) | (1 << 5) | (speed << 1)
+    *ss_hcnt = i2c_period_counts(sys_clk_hz, 100000, 4, 10)
+    *ss_lcnt = i2c_period_counts(sys_clk_hz, 100000, 47, 100)
+    *fs_hcnt = i2c_period_counts(sys_clk_hz, 400000, 26, 100)
+    *fs_lcnt = i2c_period_counts(sys_clk_hz, 400000, 63, 100)
+    *enable = 1
+
+    return I2c{ tar: tar, data_cmd: data_cmd, enable: enable, status: status }
+}
+
+/// RP2040: I2C `i2c` (0/1), SDA/SCL (FUNCSEL 3). Pico often GP4/GP5.
+pub fn i2c_out(i2c: i32, sda: i32, scl: i32, sys_clk_hz: i32, freq_hz: i32): I2c {
+    ensure_i2c_rp2040(i2c)
+    pad_i2c_rp2040(sda)
+    pad_i2c_rp2040(scl)
+    return i2c_from_base(i2c_base_rp2040(i2c), sys_clk_hz, freq_hz)
+}
+
+pub fn i2c_out_rp2350(i2c: i32, sda: i32, scl: i32, sys_clk_hz: i32, freq_hz: i32): I2c {
+    ensure_i2c_rp2350(i2c)
+    pad_i2c_rp2350(sda)
+    pad_i2c_rp2350(scl)
+    return i2c_from_base(i2c_base_rp2350(i2c), sys_clk_hz, freq_hz)
+}
+
+fn i2c_set_tar(bus: I2c, addr: i32) {
+    *(bus.enable) = 0
+    *(bus.tar) = addr & 127
+    *(bus.enable) = 1
+}
+
+pub fn (bus: I2c) writeto(addr: i32, buf: []u8) {
+    if buf.len < 1 {
+        return
+    }
+    i2c_set_tar(bus, addr)
+    let mut i: i32 = 0
+    while i < buf.len {
+        while (*(bus.status) & (1 << 1)) == 0 {
+        }
+        let mut cmd = u8_as_i32(buf[i])
+        if i == buf.len - 1 {
+            cmd = cmd | (1 << 9)
+        }
+        *(bus.data_cmd) = cmd
+        i = i + 1
+    }
+    // wait TX empty + not activity
+    while (*(bus.status) & (1 << 2)) == 0 {
+    }
+    while (*(bus.status) & 1) != 0 {
+    }
+}
+
+pub fn (bus: I2c) readfrom_into(addr: i32, buf: []u8) {
+    let n = buf.len
+    if n < 1 {
+        return
+    }
+    i2c_set_tar(bus, addr)
+    let mut i: i32 = 0
+    while i < n {
+        while (*(bus.status) & (1 << 1)) == 0 {
+        }
+        // CMD=read
+        let mut cmd = 1 << 8
+        if i == n - 1 {
+            cmd = cmd | (1 << 9)
+        }
+        *(bus.data_cmd) = cmd
+        while (*(bus.status) & (1 << 3)) == 0 {
+        }
+        let mut tmp: [4]u8
+        let p = cast(*mut i32, &tmp[0])
+        *p = *(bus.data_cmd)
+        buf[i] = tmp[0]
+        i = i + 1
+    }
+}
+
+pub fn (bus: I2c) write_readfrom_into(addr: i32, w: i32, buf: []u8) {
+    i2c_set_tar(bus, addr)
+    while (*(bus.status) & (1 << 1)) == 0 {
+    }
+    // write reg, RESTART (no STOP) — bit 10
+    *(bus.data_cmd) = (w & 255) | (1 << 10)
+    bus.readfrom_into(addr, buf)
+}
+
+pub fn (bus: I2c) deinit() {
+    *(bus.enable) = 0
+}

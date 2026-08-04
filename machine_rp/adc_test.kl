@@ -1,0 +1,9 @@
+module machine_rp
+
+import testing
+
+fn test_adc_u12_to_u16() {
+    testing.assert_eq_i32(adc_u12_to_u16(0), 0)
+    testing.assert_eq_i32(adc_u12_to_u16(4095), 65535)
+    testing.assert_eq_i32(adc_u12_to_u16(2048), 32775)
+}

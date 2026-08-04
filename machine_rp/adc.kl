@@ -1,0 +1,110 @@
+/// RP2040 / RP2350 ADC (MMIO). Channels 0..=3 → GP26..=29; ch4 = temperature.
+/// Board/startup must enable clk_adc (typically 48 MHz) — not hidden here.
+/// No hardware DAC on RP2040/RP2350.
+module machine_rp
+
+pub struct Adc {
+    cs: *mut volatile i32
+    result: *mut volatile i32
+    channel: i32
+}
+
+fn adc_u12_to_u16(raw: i32): i32 {
+    let mut r = raw
+    if r < 0 {
+        r = 0
+    }
+    if r > 4095 {
+        r = 4095
+    }
+    return (r * 65535) / 4095
+}
+
+fn ensure_adc_rp2040() {
+    ensure_gpio_clocks()
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = 1
+    let done = cast(*mut volatile i32, 0x4000c008)
+    while (*done & 1) == 0 {
+    }
+}
+
+fn ensure_adc_rp2350() {
+    ensure_gpio_clocks_rp2350()
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = 1
+    let done = cast(*mut volatile i32, 0x40020008)
+    while (*done & 1) == 0 {
+    }
+}
+
+fn adc_gpio_disable_digital_rp2040(gpio: i32) {
+    // NULL funcsel
+    gpio_func_rp2040(gpio, 31)
+    // clear IE
+    let pad_clr = cast(*mut volatile i32, 0x4001f004 + gpio * 4)
+    *pad_clr = 1 << 6
+}
+
+fn adc_gpio_disable_digital_rp2350(gpio: i32) {
+    gpio_func_rp2350(gpio, 31)
+    let pad_clr = cast(*mut volatile i32, 0x4003b004 + gpio * 4)
+    *pad_clr = 1 << 6
+}
+
+fn adc_from_base(base: i32, channel: i32): Adc {
+    let cs = cast(*mut volatile i32, base)
+    let result = cast(*mut volatile i32, base + 0x04)
+    let mut ch = channel
+    if ch < 0 {
+        ch = 0
+    }
+    if ch > 4 {
+        ch = 4
+    }
+    // EN
+    *cs = 1
+    let mut i: i32 = 0
+    while i < 50 {
+        i = i + 1
+    }
+    return Adc{ cs: cs, result: result, channel: ch }
+}
+
+/// RP2040: `gpio` should be 26..=29 for ch 0..=3 (or ignored for temp ch4).
+pub fn adc_out(gpio: i32, channel: i32): Adc {
+    ensure_adc_rp2040()
+    if channel >= 0 {
+        if channel <= 3 {
+            adc_gpio_disable_digital_rp2040(gpio)
+        }
+    }
+    return adc_from_base(0x4004c000, channel)
+}
+
+pub fn adc_out_rp2350(gpio: i32, channel: i32): Adc {
+    ensure_adc_rp2350()
+    if channel >= 0 {
+        if channel <= 3 {
+            adc_gpio_disable_digital_rp2350(gpio)
+        }
+    }
+    return adc_from_base(0x400a0000, channel)
+}
+
+pub fn (a: Adc) read_u12(): i32 {
+    // AINSEL << 12 | EN | START_ONCE
+    *(a.cs) = (a.channel << 12) | 1 | (1 << 2)
+    // READY
+    while (*(a.cs) & (1 << 8)) == 0 {
+    }
+    return *(a.result) & 4095
+}
+
+pub fn (a: Adc) read_u16(): i32 {
+    return adc_u12_to_u16(a.read_u12())
+}
+
+pub fn (a: Adc) deinit() {
+    *(a.cs) = 0
+}

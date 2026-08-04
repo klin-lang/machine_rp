@@ -1,0 +1,171 @@
+/// RP2040 / RP2350 UART (PL011 MMIO).
+/// `peri_clk_hz` is explicit (clk_peri) — no clock-tree read.
+module machine_rp
+
+pub struct Uart {
+    dr: *mut volatile i32
+    dr_u8: *mut volatile u8
+    fr: *mut volatile i32
+    cr: *mut volatile i32
+}
+
+/// Klin MVP: no `cast(i32, u8)` — alias through a little-endian byte buffer.
+fn u8_as_i32(b: u8): i32 {
+    let mut tmp: [4]u8
+    tmp[0] = b
+    tmp[1] = 0
+    tmp[2] = 0
+    tmp[3] = 0
+    let p = cast(*i32, &tmp[0])
+    return *p
+}
+
+/// 64× baud divisor: `(peri_clk_hz * 4) / baud` ≈ 64 * peri/(16*baud).
+fn uart_div64(peri_clk_hz: i32, baud: i32): i32 {
+    let mut clk = peri_clk_hz
+    if clk < 1 {
+        clk = 1
+    }
+    let mut b = baud
+    if b < 1 {
+        b = 1
+    }
+    return (clk * 4) / b
+}
+
+fn uart_ibrd(peri_clk_hz: i32, baud: i32): i32 {
+    return uart_div64(peri_clk_hz, baud) >> 6
+}
+
+fn uart_fbrd(peri_clk_hz: i32, baud: i32): i32 {
+    return uart_div64(peri_clk_hz, baud) & 63
+}
+
+fn uart_base_rp2040(uart: i32): i32 {
+    if uart == 1 {
+        return 0x40038000
+    }
+    return 0x40034000
+}
+
+fn uart_base_rp2350(uart: i32): i32 {
+    if uart == 1 {
+        return 0x40078000
+    }
+    return 0x40070000
+}
+
+fn ensure_uart_rp2040(uart: i32) {
+    ensure_gpio_clocks()
+    let mut b = 22
+    if uart == 1 {
+        b = 23
+    }
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x4000c008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn ensure_uart_rp2350(uart: i32) {
+    ensure_gpio_clocks_rp2350()
+    let mut b = 26
+    if uart == 1 {
+        b = 27
+    }
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x40020008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn gpio_func_rp2040(num: i32, func: i32) {
+    let ctrl = cast(*mut volatile i32, 0x40014000 + num * 8 + 4)
+    *ctrl = func
+}
+
+fn gpio_func_rp2350(num: i32, func: i32) {
+    let pad_clr = cast(*mut volatile i32, 0x4003b004 + num * 4)
+    *pad_clr = (1 << 8) | (1 << 7)
+    let ctrl = cast(*mut volatile i32, 0x40028000 + num * 8 + 4)
+    *ctrl = func
+}
+
+fn uart_from_base(base: i32, peri_clk_hz: i32, baud: i32): Uart {
+    let dr = cast(*mut volatile i32, base)
+    let dr_u8 = cast(*mut volatile u8, base)
+    let fr = cast(*mut volatile i32, base + 0x18)
+    let ibrd = cast(*mut volatile i32, base + 0x24)
+    let fbrd = cast(*mut volatile i32, base + 0x28)
+    let lcr_h = cast(*mut volatile i32, base + 0x2C)
+    let cr = cast(*mut volatile i32, base + 0x30)
+
+    *cr = 0
+    *ibrd = uart_ibrd(peri_clk_hz, baud)
+    *fbrd = uart_fbrd(peri_clk_hz, baud)
+    // 8N1 + FIFO
+    *lcr_h = (3 << 5) | (1 << 4)
+    // UARTEN | TXE | RXE
+    *cr = 1 | (1 << 8) | (1 << 9)
+    return Uart{ dr: dr, dr_u8: dr_u8, fr: fr, cr: cr }
+}
+
+/// RP2040: UART `uart` (0/1), TX/RX GPIOs (FUNCSEL 2), `peri_clk_hz`, baud.
+/// Pico default: UART0 GP0/GP1.
+pub fn uart_out(uart: i32, tx: i32, rx: i32, peri_clk_hz: i32, baud: i32): Uart {
+    ensure_uart_rp2040(uart)
+    gpio_func_rp2040(tx, 2)
+    gpio_func_rp2040(rx, 2)
+    return uart_from_base(uart_base_rp2040(uart), peri_clk_hz, baud)
+}
+
+/// RP2350 twin of `uart_out`.
+pub fn uart_out_rp2350(uart: i32, tx: i32, rx: i32, peri_clk_hz: i32, baud: i32): Uart {
+    ensure_uart_rp2350(uart)
+    gpio_func_rp2350(tx, 2)
+    gpio_func_rp2350(rx, 2)
+    return uart_from_base(uart_base_rp2350(uart), peri_clk_hz, baud)
+}
+
+pub fn (u: Uart) write_u8(b: i32) {
+    // wait !TXFF
+    while (*(u.fr) & (1 << 5)) != 0 {
+    }
+    *(u.dr) = b & 255
+}
+
+pub fn (u: Uart) any(): bool {
+    // RXFE == 0 → data available
+    return (*(u.fr) & (1 << 4)) == 0
+}
+
+pub fn (u: Uart) read_u8(): i32 {
+    while (*(u.fr) & (1 << 4)) != 0 {
+    }
+    return *(u.dr) & 255
+}
+
+pub fn (u: Uart) try_read_u8(): i32 {
+    if (*(u.fr) & (1 << 4)) != 0 {
+        return 0 - 1
+    }
+    return *(u.dr) & 255
+}
+
+pub fn (u: Uart) write(buf: []u8) {
+    let mut i: i32 = 0
+    while i < buf.len {
+        while (*(u.fr) & (1 << 5)) != 0 {
+        }
+        *(u.dr_u8) = buf[i]
+        i = i + 1
+    }
+}
+
+pub fn (u: Uart) deinit() {
+    *(u.cr) = 0
+}
