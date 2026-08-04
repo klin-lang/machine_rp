@@ -1,0 +1,13 @@
+// Pico ADC0 GP26 → PWM fade on GP25. clk_adc must be enabled by board for accuracy.
+import "../../machine_rp" machine
+
+@[link("startup.s")]
+@[link("boot2_w25q080.S")]
+fn main() {
+    let adc = machine.adc_out(26, 0)
+    let led = machine.pwm_out(25, 6000000)
+    led.freq(1000)
+    while true {
+        led.duty_u16(adc.read_u16())
+    }
+}

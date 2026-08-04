@@ -1,0 +1,26 @@
+// Pico UART0 GP0 (TX) / GP1 (RX). Freestanding ROSC ≈ 6 MHz as peri clock.
+import "../../machine_rp" machine
+
+@[link("startup.s")]
+@[link("boot2_w25q080.S")]
+fn main() {
+    let u = machine.uart_out(0, 0, 1, 6000000, 115200)
+    let mut msg: [6]u8
+    msg[0] = 104
+    msg[1] = 101
+    msg[2] = 108
+    msg[3] = 108
+    msg[4] = 111
+    msg[5] = 10
+    while true {
+        u.write(msg)
+        if u.any() {
+            let b = u.read_u8()
+            u.write_u8(b)
+        }
+        let mut i: i32 = 0
+        while i < 200000 {
+            i = i + 1
+        }
+    }
+}

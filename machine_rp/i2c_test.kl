@@ -1,0 +1,9 @@
+module machine_rp
+
+import testing
+
+fn test_i2c_period_counts() {
+    testing.assert_eq_i32(i2c_period_counts(125000000, 100000, 4, 10), 500)
+    testing.assert_eq_i32(i2c_base_rp2040(0), 0x40044000)
+    testing.assert_eq_i32(i2c_base_rp2040(1), 0x40048000)
+}

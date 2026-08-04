@@ -1,0 +1,199 @@
+/// RP2040 / RP2350 SPI master (PL022 MMIO). Soft NSS — CS is a separate `Pin`.
+/// `peri_clk_hz` explicit (clk_peri).
+module machine_rp
+
+pub struct Spi {
+    cr0: *mut volatile i32
+    cr1: *mut volatile i32
+    dr: *mut volatile i32
+    dr_u8: *mut volatile u8
+    sr: *mut volatile i32
+    cpsr: *mut volatile i32
+}
+
+fn spi_base_rp2040(spi: i32): i32 {
+    if spi == 1 {
+        return 0x40040000
+    }
+    return 0x4003c000
+}
+
+fn spi_base_rp2350(spi: i32): i32 {
+    if spi == 1 {
+        return 0x40088000
+    }
+    return 0x40080000
+}
+
+/// CPSR even divisor 2..=254 such that peri/CPSR ≤ baud (SCR=0).
+fn spi_cpsr(peri_clk_hz: i32, baud_hz: i32): i32 {
+    let mut clk = peri_clk_hz
+    if clk < 1 {
+        clk = 1
+    }
+    let mut baud = baud_hz
+    if baud < 1 {
+        baud = 1
+    }
+    let mut div = (clk + baud - 1) / baud
+    if div < 2 {
+        div = 2
+    }
+    if (div & 1) != 0 {
+        div = div + 1
+    }
+    if div > 254 {
+        div = 254
+    }
+    return div
+}
+
+fn ensure_spi_rp2040(spi: i32) {
+    ensure_gpio_clocks()
+    let mut b = 16
+    if spi == 1 {
+        b = 17
+    }
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x4000c008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn ensure_spi_rp2350(spi: i32) {
+    ensure_gpio_clocks_rp2350()
+    let mut b = 18
+    if spi == 1 {
+        b = 19
+    }
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x40020008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn spi_from_base(base: i32, peri_clk_hz: i32, baud_hz: i32, mode: i32): Spi {
+    let cr0 = cast(*mut volatile i32, base)
+    let cr1 = cast(*mut volatile i32, base + 0x04)
+    let dr = cast(*mut volatile i32, base + 0x08)
+    let dr_u8 = cast(*mut volatile u8, base + 0x08)
+    let sr = cast(*mut volatile i32, base + 0x0C)
+    let cpsr = cast(*mut volatile i32, base + 0x10)
+
+    *cr1 = 0
+    *cpsr = spi_cpsr(peri_clk_hz, baud_hz)
+    let mut m = mode
+    if m < 0 {
+        m = 0
+    }
+    if m > 3 {
+        m = 3
+    }
+    // DSS=7 (8-bit), SPO/SPH from mode, SCR=0
+    *cr0 = 7 | ((m & 3) << 6)
+    // SSE | master (MS=0)
+    *cr1 = 1 << 1
+
+    return Spi{ cr0: cr0, cr1: cr1, dr: dr, dr_u8: dr_u8, sr: sr, cpsr: cpsr }
+}
+
+/// RP2040: SPI `spi` (0/1), SCK/MOSI/MISO FUNCSEL 1. Pico SPI0 often GP18/19/16.
+pub fn spi_out(
+    spi: i32,
+    sck: i32,
+    mosi: i32,
+    miso: i32,
+    peri_clk_hz: i32,
+    baud_hz: i32,
+    mode: i32
+): Spi {
+    ensure_spi_rp2040(spi)
+    gpio_func_rp2040(sck, 1)
+    gpio_func_rp2040(mosi, 1)
+    gpio_func_rp2040(miso, 1)
+    return spi_from_base(spi_base_rp2040(spi), peri_clk_hz, baud_hz, mode)
+}
+
+pub fn spi_out_rp2350(
+    spi: i32,
+    sck: i32,
+    mosi: i32,
+    miso: i32,
+    peri_clk_hz: i32,
+    baud_hz: i32,
+    mode: i32
+): Spi {
+    ensure_spi_rp2350(spi)
+    gpio_func_rp2350(sck, 1)
+    gpio_func_rp2350(mosi, 1)
+    gpio_func_rp2350(miso, 1)
+    return spi_from_base(spi_base_rp2350(spi), peri_clk_hz, baud_hz, mode)
+}
+
+pub fn (s: Spi) write_read_u8(b: i32): i32 {
+    // TNF
+    while (*(s.sr) & (1 << 1)) == 0 {
+    }
+    *(s.dr) = b & 255
+    // RNE
+    while (*(s.sr) & 1) == 0 {
+    }
+    return *(s.dr) & 255
+}
+
+pub fn (s: Spi) write(buf: []u8) {
+    let mut i: i32 = 0
+    while i < buf.len {
+        while (*(s.sr) & (1 << 1)) == 0 {
+        }
+        *(s.dr_u8) = buf[i]
+        while (*(s.sr) & 1) == 0 {
+        }
+        let drain = *(s.dr)
+        i = i + 1 + drain * 0
+    }
+}
+
+pub fn (s: Spi) readinto(buf: []u8) {
+    let mut i: i32 = 0
+    while i < buf.len {
+        while (*(s.sr) & (1 << 1)) == 0 {
+        }
+        *(s.dr) = 255
+        while (*(s.sr) & 1) == 0 {
+        }
+        let mut tmp: [4]u8
+        let p = cast(*mut i32, &tmp[0])
+        *p = *(s.dr)
+        buf[i] = tmp[0]
+        i = i + 1
+    }
+}
+
+pub fn (s: Spi) write_readinto(wbuf: []u8, rbuf: []u8) {
+    let mut n = rbuf.len
+    if wbuf.len < n {
+        n = wbuf.len
+    }
+    let mut i: i32 = 0
+    while i < n {
+        while (*(s.sr) & (1 << 1)) == 0 {
+        }
+        *(s.dr_u8) = wbuf[i]
+        while (*(s.sr) & 1) == 0 {
+        }
+        let mut tmp: [4]u8
+        let p = cast(*mut i32, &tmp[0])
+        *p = *(s.dr)
+        rbuf[i] = tmp[0]
+        i = i + 1
+    }
+}
+
+pub fn (s: Spi) deinit() {
+    *(s.cr1) = 0
+}

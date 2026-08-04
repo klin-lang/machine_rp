@@ -1,0 +1,10 @@
+module machine_rp
+
+import testing
+
+fn test_spi_cpsr() {
+    // 125 MHz / 1 MHz → 125 → odd → 126
+    testing.assert_eq_i32(spi_cpsr(125000000, 1000000), 126)
+    testing.assert_eq_i32(spi_cpsr(125000000, 62500000), 2)
+    testing.assert_eq_i32(spi_base_rp2040(0), 0x4003c000)
+}

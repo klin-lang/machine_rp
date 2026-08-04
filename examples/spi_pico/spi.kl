@@ -1,0 +1,15 @@
+// Pico SPI0: GP18 SCK / GP19 MOSI / GP16 MISO — clock out 0xA5.
+import "../../machine_rp" machine
+
+@[link("startup.s")]
+@[link("boot2_w25q080.S")]
+fn main() {
+    let s = machine.spi_out(0, 18, 19, 16, 6000000, 1000000, 0)
+    while true {
+        let r = s.write_read_u8(0xA5)
+        let mut i: i32 = 0
+        while i < 10000 {
+            i = i + 1 + r * 0
+        }
+    }
+}

@@ -1,0 +1,15 @@
+module machine_rp
+
+import testing
+
+fn test_uart_baud_divs_115200() {
+    // peri 125 MHz → div64 = 125e6*4/115200 = 4340; ibrd=67, fbrd=52
+    testing.assert_eq_i32(uart_ibrd(125000000, 115200), 67)
+    testing.assert_eq_i32(uart_fbrd(125000000, 115200), 52)
+}
+
+fn test_uart_base_map() {
+    testing.assert_eq_i32(uart_base_rp2040(0), 0x40034000)
+    testing.assert_eq_i32(uart_base_rp2040(1), 0x40038000)
+    testing.assert_eq_i32(uart_base_rp2350(0), 0x40070000)
+}

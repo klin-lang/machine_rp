@@ -1,0 +1,19 @@
+// Pico I2C0 GP4 (SDA) / GP5 (SCL) — init + LED blink (no slave xfer).
+import "../../machine_rp" machine
+
+@[link("startup.s")]
+@[link("boot2_w25q080.S")]
+fn main() {
+    let bus = machine.i2c_out(0, 4, 5, 6000000, 100000)
+    let led = machine.pin_out(25)
+    while true {
+        led.toggle()
+        let mut i: i32 = 0
+        while i < 200000 {
+            i = i + 1
+        }
+        if false {
+            bus.deinit()
+        }
+    }
+}
