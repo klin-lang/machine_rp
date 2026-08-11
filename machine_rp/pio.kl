@@ -11,6 +11,7 @@ pub struct Pio {
     rxf: *mut volatile i32
     clkdiv: *mut volatile i32
     execctrl: *mut volatile i32
+    shiftctrl: *mut volatile i32
     instr: *mut volatile i32
     pinctrl: *mut volatile i32
     sm: i32
@@ -97,6 +98,7 @@ fn pio_from_base(base: i32, pio_id: i32, sm: i32, is_rp2350: i32): Pio {
         rxf: cast(*mut volatile i32, base + 0x20 + s * 4),
         clkdiv: cast(*mut volatile i32, base + sm_off),
         execctrl: cast(*mut volatile i32, base + sm_off + 0x04),
+        shiftctrl: cast(*mut volatile i32, base + sm_off + 0x08),
         instr: cast(*mut volatile i32, base + sm_off + 0x10),
         pinctrl: cast(*mut volatile i32, base + sm_off + 0x14),
         sm: s,
@@ -174,6 +176,85 @@ pub fn pio_encode_jmp(addr: i32): i32 {
     return addr & 31
 }
 
+/// Encode `JMP !X addr`.
+pub fn pio_encode_jmp_not_x(addr: i32): i32 {
+    return 0x0020 | (addr & 31)
+}
+
+/// Encode `OUT x, count` (`count` 1..=32; 32 → encoded 0).
+pub fn pio_encode_out_x(count: i32): i32 {
+    let mut c = count
+    if c < 1 {
+        c = 1
+    }
+    if c > 32 {
+        c = 32
+    }
+    if c == 32 {
+        c = 0
+    }
+    // OUT | dest=X(1) | count
+    return 0x6000 | (1 << 5) | c
+}
+
+/// Delay field bits to OR into an instruction (`cycles` 0..=31; less if sideset used).
+pub fn pio_encode_delay(cycles: i32): i32 {
+    let mut d = cycles
+    if d < 0 {
+        d = 0
+    }
+    if d > 31 {
+        d = 31
+    }
+    return d << 8
+}
+
+/// Side-set field bits (non-optional `.side_set N`) to OR into an instruction.
+pub fn pio_encode_sideset(bit_count: i32, value: i32): i32 {
+    let mut n = bit_count
+    if n < 1 {
+        n = 1
+    }
+    if n > 5 {
+        n = 5
+    }
+    let mask = (1 << n) - 1
+    return (value & mask) << (13 - n)
+}
+
+/// Integer part of `sys_hz / sm_hz` for `config_clkdiv_frac` (1..=65536).
+pub fn pio_clkdiv_int(sys_hz: i32, sm_hz: i32): i32 {
+    let mut sys = sys_hz
+    if sys < 1 {
+        sys = 1
+    }
+    let mut sm = sm_hz
+    if sm < 1 {
+        sm = 1
+    }
+    let d = sys / sm
+    if d < 1 {
+        return 1
+    }
+    if d > 65536 {
+        return 65536
+    }
+    return d
+}
+
+/// Fractional part 0..=255 of `sys_hz / sm_hz` (FRAC/256).
+pub fn pio_clkdiv_frac(sys_hz: i32, sm_hz: i32): i32 {
+    let mut sys = sys_hz
+    if sys < 1 {
+        sys = 1
+    }
+    let mut sm = sm_hz
+    if sm < 1 {
+        sm = 1
+    }
+    return ((sys % sm) * 256) / sm
+}
+
 /// Claim GPIO for this PIO block (FUNCSEL 6/7/8). Still need pindirs (SET/exec).
 pub fn (p: Pio) gpio_init(gpio: i32) {
     let func = pio_funcsel(p.pio_id)
@@ -217,6 +298,11 @@ pub fn (p: Pio) config_wrap(bottom: i32, top: i32) {
 
 /// Integer clock divisor. `div_int` 1..=65536 (65536 → INT field 0). FRAC=0.
 pub fn (p: Pio) config_clkdiv(div_int: i32) {
+    p.config_clkdiv_frac(div_int, 0)
+}
+
+/// Clock divisor INT + FRAC/256. `div_int` 1..=65536 (65536 → INT field 0).
+pub fn (p: Pio) config_clkdiv_frac(div_int: i32, div_frac: i32) {
     let mut d = div_int
     if d < 1 {
         d = 1
@@ -228,7 +314,14 @@ pub fn (p: Pio) config_clkdiv(div_int: i32) {
     if enc == 65536 {
         enc = 0
     }
-    *(p.clkdiv) = enc << 16
+    let mut f = div_frac
+    if f < 0 {
+        f = 0
+    }
+    if f > 255 {
+        f = 255
+    }
+    *(p.clkdiv) = (enc << 16) | (f << 8)
 }
 
 /// SET pin mapping: base GPIO + count (1..=5). Preserves other PINCTRL fields.
@@ -261,6 +354,55 @@ pub fn (p: Pio) config_out_pins(base_gpio: i32, count: i32) {
     // OUT_COUNT 25:20, OUT_BASE 4:0
     let clear = 0x03f00000 | 0x1f
     *(p.pinctrl) = (cur & (0 - 1 - clear)) | (c << 20) | b
+}
+
+/// Side-set pin mapping (non-optional `.side_set count`). `count` 1..=5.
+pub fn (p: Pio) config_sideset_pins(base_gpio: i32, count: i32) {
+    let mut c = count
+    if c < 1 {
+        c = 1
+    }
+    if c > 5 {
+        c = 5
+    }
+    let b = base_gpio & 31
+    let cur = *(p.pinctrl)
+    // SIDESET_COUNT 31:29, SIDESET_BASE 14:10
+    let clear = 0xe0000000 | 0x7c00
+    *(p.pinctrl) = (cur & (0 - 1 - clear)) | (c << 29) | (b << 10)
+}
+
+/// OUT shift: `shift_right` 0=left (MSB first) / 1=right; autopull; threshold 1..=32 (32→0).
+pub fn (p: Pio) config_out_shift(shift_right: i32, autopull: i32, threshold: i32) {
+    let mut th = threshold
+    if th < 1 {
+        th = 1
+    }
+    if th > 32 {
+        th = 32
+    }
+    if th == 32 {
+        th = 0
+    }
+    let cur = *(p.shiftctrl)
+    // clear PULL_THRESH, OUT_SHIFTDIR, AUTOPULL
+    let clear = 0x3e000000 | 0x80000 | 0x20000
+    let mut v = cur & (0 - 1 - clear)
+    v = v | (th << 25)
+    if shift_right != 0 {
+        v = v | (1 << 19)
+    }
+    if autopull != 0 {
+        v = v | (1 << 17)
+    }
+    *(p.shiftctrl) = v
+}
+
+/// Join RX into TX FIFO (double TX depth). Clears FJOIN_RX.
+pub fn (p: Pio) config_fifo_join_tx() {
+    let cur = *(p.shiftctrl)
+    let clear = 0x80000000 | 0x40000000
+    *(p.shiftctrl) = (cur & (0 - 1 - clear)) | (1 << 30)
 }
 
 /// Enable (`on != 0`) or disable the state machine. On enable: restart + JMP wrap_bottom.
