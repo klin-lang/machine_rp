@@ -8,18 +8,18 @@ Decision / catalog: [Klin issue 061](https://github.com/klin-lang/klin/blob/main
 
 ## Status
 
-| Chip | Pin | Pwm | Rc | Uart | I2c | Spi | Adc | Pio | Dac |
-|---|---|---|---|---|---|---|---|---|---|
-| **RP2040** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — (no HW) |
-| **RP2350** | ✅ `*_rp2350` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `*_rp2350` (+ PIO2) | — (no HW) |
+| Chip | Pin | Pwm | Rc | Uart | I2c | Spi | Adc | Pio | Dma | Dac |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **RP2040** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — (no HW) |
+| **RP2350** | ✅ `*_rp2350` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `*_rp2350` (+ PIO2) | ✅ `*_rp2350` | — (no HW) |
 
 Examples: `blink_pico`, `pwm_pico`, `rc_pico`, `uart_pico`, `i2c_pico`, `spi_pico`, `adc_pico`, `pio_blink_pico` (+ Pico 2 blink).
 
-`version()` → `8` (`@v0.8.0`).
+`version()` → `9` (`@v0.9.0`).
 
 **No hardware DAC** on RP2040 / RP2350 — do not expect `dac_out`.
 
-**PIO** is RP silicon only (not on other `machine_*` ports).
+**PIO** and **DMA** are RP silicon only (not on other `machine_*` ports).
 
 ## Requirements
 
@@ -61,10 +61,13 @@ bus.readfrom_into(0x50, rbuf)
 ## Usage — Spi
 
 PL022 master, soft NSS (CS = separate `Pin`). FUNCSEL 1.
+`SSPDMACR.TXDMAE` is enabled at factory; use `write_dma` / `write_dma_repeat2` with a claimed `Dma`.
 
 ```klin
 let s = machine.spi_out(0, 18, 19, 16, 125000000, 1000000, 0)
 let v = s.write_read_u8(0x9F)
+let d = machine.dma_out(0)
+s.write_dma(d, buf, machine.dma_dreq_spi0_tx())
 ```
 
 ## Usage — Adc
@@ -98,8 +101,19 @@ sm.active(1)
 sm.put_u32(grb << 8)
 ```
 
+## Usage — Dma
+
+Claim a channel (`dma_out` / `dma_out_rp2350`). Byte TX to a peripheral FIFO:
+`start_to_peri` + `wait`, or `Spi.write_dma` / `write_dma_repeat2` (2-byte ring for solid fills).
+DREQ helpers: `dma_dreq_spi*_tx` / `*_rp2350`. No IRQ, no heap, no hidden clocks.
+
+```klin
+let d = machine.dma_out_rp2350(0)
+s.write_dma_repeat2(d, lo, hi, nbytes, machine.dma_dreq_spi1_tx_rp2350())
+```
+
 ```sh
-klin get github/klin-lang/machine_rp@v0.8.0
+klin get github/klin-lang/machine_rp@v0.9.0
 ```
 
 ## Shape (shared with other `machine_*`)
@@ -109,9 +123,10 @@ klin get github/klin-lang/machine_rp@v0.8.0
 | `*_out` / `*_out_rp2350` | factory — RP2040 vs RP2350 maps |
 | `write_u8` / `write` / `read_u8` / `try_read_u8` / `any` | UART |
 | `writeto` / `readfrom_into` / `write_readfrom_into` | I2C |
-| `write_read_u8` / `write` / `readinto` / `write_readinto` | SPI |
+| `write_read_u8` / `write` / `readinto` / `write_readinto` / `write_dma*` | SPI |
 | `read_u12` / `read_u16` | ADC |
 | `load` / `config_*` / `active` / `put_u32` / `get_u32` / `exec` | PIO |
+| `start_to_peri` / `wait` / `busy` | DMA |
 | `deinit` | stop peripheral (explicit) |
 
 ## Examples
