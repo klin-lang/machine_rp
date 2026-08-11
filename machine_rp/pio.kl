@@ -1,0 +1,325 @@
+/// RP2040 / RP2350 PIO state machine (MMIO). Programs are raw 16-bit encodings
+/// in `[]i32` — no assembler, no hidden allocation. PIO is clocked from clk_sys;
+/// rate is explicit via `config_clkdiv`.
+module machine_rp
+
+pub struct Pio {
+    base: i32
+    ctrl: *mut volatile i32
+    fstat: *mut volatile i32
+    txf: *mut volatile i32
+    rxf: *mut volatile i32
+    clkdiv: *mut volatile i32
+    execctrl: *mut volatile i32
+    instr: *mut volatile i32
+    pinctrl: *mut volatile i32
+    sm: i32
+    pio_id: i32
+    is_rp2350: i32
+}
+
+fn pio_base(pio: i32): i32 {
+    if pio == 1 {
+        return 0x50300000
+    }
+    if pio == 2 {
+        return 0x50400000
+    }
+    return 0x50200000
+}
+
+fn pio_reset_bit_rp2040(pio: i32): i32 {
+    // RESETS: PIO0=10, PIO1=11
+    if pio == 1 {
+        return 11
+    }
+    return 10
+}
+
+fn pio_reset_bit_rp2350(pio: i32): i32 {
+    // RESETS: PIO0=11, PIO1=12, PIO2=13
+    if pio == 1 {
+        return 12
+    }
+    if pio == 2 {
+        return 13
+    }
+    return 11
+}
+
+fn ensure_pio_rp2040(pio: i32) {
+    ensure_gpio_clocks()
+    let b = pio_reset_bit_rp2040(pio)
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x4000c008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn ensure_pio_rp2350(pio: i32) {
+    ensure_gpio_clocks_rp2350()
+    let b = pio_reset_bit_rp2350(pio)
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = 1 << b
+    let done = cast(*mut volatile i32, 0x40020008)
+    let need = 1 << b
+    while (*done & need) != need {
+    }
+}
+
+fn pio_funcsel(pio_id: i32): i32 {
+    // FUNCSEL: PIO0=6, PIO1=7, PIO2=8 (RP2350)
+    if pio_id == 1 {
+        return 7
+    }
+    if pio_id == 2 {
+        return 8
+    }
+    return 6
+}
+
+fn pio_from_base(base: i32, pio_id: i32, sm: i32, is_rp2350: i32): Pio {
+    let mut s = sm
+    if s < 0 {
+        s = 0
+    }
+    if s > 3 {
+        s = 3
+    }
+    let sm_off = 0xc8 + s * 24
+    return Pio{
+        base: base,
+        ctrl: cast(*mut volatile i32, base),
+        fstat: cast(*mut volatile i32, base + 0x04),
+        txf: cast(*mut volatile i32, base + 0x10 + s * 4),
+        rxf: cast(*mut volatile i32, base + 0x20 + s * 4),
+        clkdiv: cast(*mut volatile i32, base + sm_off),
+        execctrl: cast(*mut volatile i32, base + sm_off + 0x04),
+        instr: cast(*mut volatile i32, base + sm_off + 0x10),
+        pinctrl: cast(*mut volatile i32, base + sm_off + 0x14),
+        sm: s,
+        pio_id: pio_id,
+        is_rp2350: is_rp2350
+    }
+}
+
+/// RP2040: PIO `pio` (0/1), state machine `sm` (0..=3). Does not claim GPIOs.
+pub fn pio_out(pio: i32, sm: i32): Pio {
+    let mut id = pio
+    if id < 0 {
+        id = 0
+    }
+    if id > 1 {
+        id = 1
+    }
+    ensure_pio_rp2040(id)
+    return pio_from_base(pio_base(id), id, sm, 0)
+}
+
+/// RP2350: PIO `pio` (0/1/2), state machine `sm` (0..=3).
+pub fn pio_out_rp2350(pio: i32, sm: i32): Pio {
+    let mut id = pio
+    if id < 0 {
+        id = 0
+    }
+    if id > 2 {
+        id = 2
+    }
+    ensure_pio_rp2350(id)
+    return pio_from_base(pio_base(id), id, sm, 1)
+}
+
+/// Encode `SET pins, data` with delay 0..=31.
+pub fn pio_encode_set_pins(data: i32, delay: i32): i32 {
+    let d = data & 31
+    let mut del = delay
+    if del < 0 {
+        del = 0
+    }
+    if del > 31 {
+        del = 31
+    }
+    return 0xe000 | (del << 8) | d
+}
+
+/// Encode `SET pindirs, data` with delay 0..=31.
+pub fn pio_encode_set_pindirs(data: i32, delay: i32): i32 {
+    let d = data & 31
+    let mut del = delay
+    if del < 0 {
+        del = 0
+    }
+    if del > 31 {
+        del = 31
+    }
+    return 0xe000 | (del << 8) | (4 << 5) | d
+}
+
+/// Encode `NOP` (`MOV y, y`) with delay 0..=31.
+pub fn pio_encode_nop(delay: i32): i32 {
+    let mut del = delay
+    if del < 0 {
+        del = 0
+    }
+    if del > 31 {
+        del = 31
+    }
+    return 0xa042 | (del << 8)
+}
+
+/// Encode unconditional `JMP addr` (absolute instr memory index 0..=31).
+pub fn pio_encode_jmp(addr: i32): i32 {
+    return addr & 31
+}
+
+/// Claim GPIO for this PIO block (FUNCSEL 6/7/8). Still need pindirs (SET/exec).
+pub fn (p: Pio) gpio_init(gpio: i32) {
+    let func = pio_funcsel(p.pio_id)
+    if p.is_rp2350 != 0 {
+        gpio_func_rp2350(gpio, func)
+    } else {
+        gpio_func_rp2040(gpio, func)
+    }
+}
+
+/// Load program words into instruction memory at `offset` (0..=31).
+pub fn (p: Pio) load(prog: []i32, offset: i32) {
+    let mut off = offset
+    if off < 0 {
+        off = 0
+    }
+    if off > 31 {
+        off = 31
+    }
+    let mut i: i32 = 0
+    while i < prog.len {
+        let addr = off + i
+        if addr > 31 {
+            break
+        }
+        let slot = cast(*mut volatile i32, p.base + 0x48 + addr * 4)
+        *slot = prog[i] & 65535
+        i = i + 1
+    }
+}
+
+/// Wrap loop: after `top`, PC goes to `bottom` (inclusive indices).
+pub fn (p: Pio) config_wrap(bottom: i32, top: i32) {
+    let b = bottom & 31
+    let t = top & 31
+    let cur = *(p.execctrl)
+    // clear WRAP_TOP (16:12) and WRAP_BOTTOM (11:7)
+    let clear = 0x1f000 | 0x1f80
+    *(p.execctrl) = (cur & (0 - 1 - clear)) | (t << 12) | (b << 7)
+}
+
+/// Integer clock divisor. `div_int` 1..=65536 (65536 → INT field 0). FRAC=0.
+pub fn (p: Pio) config_clkdiv(div_int: i32) {
+    let mut d = div_int
+    if d < 1 {
+        d = 1
+    }
+    if d > 65536 {
+        d = 65536
+    }
+    let mut enc = d
+    if enc == 65536 {
+        enc = 0
+    }
+    *(p.clkdiv) = enc << 16
+}
+
+/// SET pin mapping: base GPIO + count (1..=5). Preserves other PINCTRL fields.
+pub fn (p: Pio) config_set_pins(base_gpio: i32, count: i32) {
+    let mut c = count
+    if c < 1 {
+        c = 1
+    }
+    if c > 5 {
+        c = 5
+    }
+    let b = base_gpio & 31
+    let cur = *(p.pinctrl)
+    // SET_COUNT 28:26, SET_BASE 9:5
+    let clear = 0x1c000000 | 0x3e0
+    *(p.pinctrl) = (cur & (0 - 1 - clear)) | (c << 26) | (b << 5)
+}
+
+/// OUT pin mapping: base GPIO + count (1..=32). Preserves other PINCTRL fields.
+pub fn (p: Pio) config_out_pins(base_gpio: i32, count: i32) {
+    let mut c = count
+    if c < 1 {
+        c = 1
+    }
+    if c > 32 {
+        c = 32
+    }
+    let b = base_gpio & 31
+    let cur = *(p.pinctrl)
+    // OUT_COUNT 25:20, OUT_BASE 4:0
+    let clear = 0x03f00000 | 0x1f
+    *(p.pinctrl) = (cur & (0 - 1 - clear)) | (c << 20) | b
+}
+
+/// Enable (`on != 0`) or disable the state machine. On enable: restart + JMP wrap_bottom.
+pub fn (p: Pio) active(on: i32) {
+    let bit = 1 << p.sm
+    let cur = *(p.ctrl)
+    if on == 0 {
+        *(p.ctrl) = cur & (0 - 1 - bit)
+        return
+    }
+    *(p.ctrl) = cur & (0 - 1 - bit)
+    *(p.ctrl) = bit << 4
+    let ex = *(p.execctrl)
+    let bottom = (ex >> 7) & 31
+    *(p.instr) = pio_encode_jmp(bottom)
+    let cur2 = *(p.ctrl)
+    *(p.ctrl) = cur2 | bit
+}
+
+/// Push one word to TX FIFO (blocks while full).
+pub fn (p: Pio) put_u32(v: i32) {
+    let bit = 1 << p.sm
+    while (*(p.fstat) & (bit << 16)) != 0 {
+    }
+    *(p.txf) = v
+}
+
+/// Pop one word from RX FIFO (blocks while empty).
+pub fn (p: Pio) get_u32(): i32 {
+    let bit = 1 << p.sm
+    while (*(p.fstat) & (bit << 8)) != 0 {
+    }
+    return *(p.rxf)
+}
+
+/// 1 if TX FIFO is full.
+pub fn (p: Pio) tx_full(): i32 {
+    let bit = 1 << p.sm
+    if (*(p.fstat) & (bit << 16)) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/// 1 if RX FIFO is empty.
+pub fn (p: Pio) rx_empty(): i32 {
+    let bit = 1 << p.sm
+    if (*(p.fstat) & (bit << 8)) != 0 {
+        return 1
+    }
+    return 0
+}
+
+/// Execute one instruction immediately via SM_INSTR (works while SM disabled).
+pub fn (p: Pio) exec(instr_word: i32) {
+    *(p.instr) = instr_word & 65535
+}
+
+/// Disable SM. Does not restore GPIO FUNCSEL or free instruction memory.
+pub fn (p: Pio) deinit() {
+    p.active(0)
+}

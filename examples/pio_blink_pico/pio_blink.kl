@@ -1,0 +1,34 @@
+// Pico LED GP25 via PIO0 SM0 — SET pins blink (no CPU toggle loop).
+import "../../machine_rp" machine
+
+@[link("startup.s")]
+@[link("boot2_w25q080.S")]
+fn main() {
+    let sm = machine.pio_out(0, 0)
+    sm.gpio_init(25)
+    sm.config_set_pins(25, 1)
+    // set pindirs, 1
+    // .wrap_target
+    // set pins, 1 [31] + nops
+    // set pins, 0 [31] + nops
+    // .wrap
+    let mut prog: [11]i32
+    prog[0] = machine.pio_encode_set_pindirs(1, 0)
+    prog[1] = machine.pio_encode_set_pins(1, 31)
+    prog[2] = machine.pio_encode_nop(31)
+    prog[3] = machine.pio_encode_nop(31)
+    prog[4] = machine.pio_encode_nop(31)
+    prog[5] = machine.pio_encode_nop(31)
+    prog[6] = machine.pio_encode_set_pins(0, 31)
+    prog[7] = machine.pio_encode_nop(31)
+    prog[8] = machine.pio_encode_nop(31)
+    prog[9] = machine.pio_encode_nop(31)
+    prog[10] = machine.pio_encode_nop(31)
+    sm.load(prog[:], 0)
+    sm.config_wrap(1, 10)
+    // Max integer div 65536 → ~6 Hz at 125 MHz (10×32 SM cycles/period)
+    sm.config_clkdiv(65536)
+    sm.active(1)
+    while true {
+    }
+}
