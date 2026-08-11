@@ -95,6 +95,31 @@ pub fn dma_dreq_spi1_tx_rp2350(): i32 {
     return 26
 }
 
+/// DMA DREQ for PIO `pio` (0..=2) SM `sm` (0..=3) TX FIFO.
+/// RP2040/RP2350: PIO0 TX0=0 … PIO1 TX0=8; RP2350 also PIO2 TX0=16.
+pub fn dma_dreq_pio_tx(pio: i32, sm: i32): i32 {
+    let mut p = pio
+    if p < 0 {
+        p = 0
+    }
+    if p > 2 {
+        p = 2
+    }
+    let mut s = sm
+    if s < 0 {
+        s = 0
+    }
+    if s > 3 {
+        s = 3
+    }
+    return p * 8 + s
+}
+
+/// Same numbering as `dma_dreq_pio_tx` (RP2350 DREQ table).
+pub fn dma_dreq_pio_tx_rp2350(pio: i32, sm: i32): i32 {
+    return dma_dreq_pio_tx(pio, sm)
+}
+
 /// CTRL for byte TX to a peripheral FIFO: optional read-increment + optional
 /// read ring (`ring_bits`: 0 = none, 1 = 2-byte wrap, …). `CHAIN_TO` = self.
 pub fn dma_ctrl_byte_tx(

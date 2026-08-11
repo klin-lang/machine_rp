@@ -15,7 +15,7 @@ Decision / catalog: [Klin issue 061](https://github.com/klin-lang/klin/blob/main
 
 Examples: `blink_pico`, `pwm_pico`, `rc_pico`, `uart_pico`, `i2c_pico`, `spi_pico`, `adc_pico`, `pio_blink_pico` (+ Pico 2 blink).
 
-`version()` → `10` (`@v0.10.0`).
+`version()` → `11` (`@v0.11.0`).
 
 **No hardware DAC** on RP2040 / RP2350 — do not expect `dac_out`.
 
@@ -83,9 +83,10 @@ let u16 = adc.read_u16()
 
 ## Usage — Pio
 
-Raw instruction words (`[]i32`). Helpers: `pio_encode_set_*` / `nop` / `jmp` / `jmp_not_x` / `out_x` /
-`delay` / `sideset`. Config: wrap, clkdiv(+frac), set/out/sideset pins, out_shift, fifo_join_tx.
-RP2040: PIO0/1. RP2350: PIO0/1/2 via `pio_out_rp2350`.
+Raw instruction words (`[]i32`). Helpers: `pio_encode_set_*` / `nop` / `jmp` / `jmp_not_x` /
+`out_x` / `out_pins` / `delay` / `sideset`. Config: wrap, clkdiv(+frac), set/out/sideset pins,
+out_shift, fifo_join_tx. TX helpers: `put_u8`, `wait_tx_stall`, `write_dma` / `write_dma_repeat2`
+(DMA paced by `dma_dreq_pio_tx`). RP2040: PIO0/1. RP2350: PIO0/1/2 via `pio_out_rp2350`.
 
 ```klin
 let sm = machine.pio_out(0, 0)
@@ -104,16 +105,18 @@ sm.put_u32(grb << 8)
 ## Usage — Dma
 
 Claim a channel (`dma_out` / `dma_out_rp2350`). Byte TX to a peripheral FIFO:
-`start_to_peri` + `wait`, or `Spi.write_dma` / `write_dma_repeat2` (2-byte ring for solid fills).
-DREQ helpers: `dma_dreq_spi*_tx` / `*_rp2350`. No IRQ, no heap, no hidden clocks.
+`start_to_peri` + `wait`, or `Spi` / `Pio` `write_dma` / `write_dma_repeat2` (2-byte ring).
+DREQ helpers: `dma_dreq_spi*_tx` / `*_rp2350`, `dma_dreq_pio_tx(pio, sm)`. No IRQ, no heap,
+no hidden clocks.
 
 ```klin
 let d = machine.dma_out_rp2350(0)
 s.write_dma_repeat2(d, lo, hi, nbytes, machine.dma_dreq_spi1_tx_rp2350())
+sm.write_dma(d, buf[:], machine.dma_dreq_pio_tx_rp2350(0, 1))
 ```
 
 ```sh
-klin get github/klin-lang/machine_rp@v0.10.0
+klin get github/klin-lang/machine_rp@v0.11.0
 ```
 
 
@@ -142,8 +145,8 @@ while true {
 | `writeto` / `readfrom_into` / `write_readfrom_into` | I2C |
 | `write_read_u8` / `write` / `readinto` / `write_readinto` / `write_dma*` | SPI |
 | `read_u12` / `read_u16` | ADC |
-| `load` / `config_*` / `active` / `put_u32` / `get_u32` / `exec` | PIO |
-| `start_to_peri` / `wait` / `busy` | DMA |
+| `load` / `config_*` / `active` / `put_u32` / `put_u8` / `write_dma*` / `wait_tx_stall` | PIO |
+| `start_to_peri` / `wait` / `busy` / `dma_dreq_pio_tx*` | DMA |
 | `poll` / `configured` / `write_u8` / `try_read_u8` | UsbCdc |
 | `deinit` | stop peripheral (explicit) |
 
