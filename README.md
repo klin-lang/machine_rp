@@ -15,7 +15,7 @@ Decision / catalog: [Klin issue 061](https://github.com/klin-lang/klin/blob/main
 
 Examples: `blink_pico`, `pwm_pico`, `rc_pico`, `uart_pico`, `i2c_pico`, `spi_pico`, `adc_pico`, `pio_blink_pico` (+ Pico 2 blink).
 
-`version()` → `7` (`@v0.7.0`).
+`version()` → `8` (`@v0.8.0`).
 
 **No hardware DAC** on RP2040 / RP2350 — do not expect `dac_out`.
 
@@ -80,25 +80,26 @@ let u16 = adc.read_u16()
 
 ## Usage — Pio
 
-Raw instruction words (`[]i32`). Helpers: `pio_encode_set_pins` / `set_pindirs` / `nop` / `jmp`.
+Raw instruction words (`[]i32`). Helpers: `pio_encode_set_*` / `nop` / `jmp` / `jmp_not_x` / `out_x` /
+`delay` / `sideset`. Config: wrap, clkdiv(+frac), set/out/sideset pins, out_shift, fifo_join_tx.
 RP2040: PIO0/1. RP2350: PIO0/1/2 via `pio_out_rp2350`.
 
 ```klin
 let sm = machine.pio_out(0, 0)
 sm.gpio_init(25)
-sm.config_set_pins(25, 1)
-let mut prog: [2]i32
-prog[0] = machine.pio_encode_set_pindirs(1, 0)
-prog[1] = machine.pio_encode_set_pins(1, 0)
-sm.load(prog[:], 0)
-sm.config_wrap(1, 1)
-sm.config_clkdiv(1)
+sm.config_sideset_pins(25, 1)
+sm.config_out_shift(0, 1, 24)  // shift left, autopull 24
+sm.config_fifo_join_tx()
+sm.config_clkdiv_frac(
+    machine.pio_clkdiv_int(12000000, 8000000),
+    machine.pio_clkdiv_frac(12000000, 8000000)
+)
 sm.active(1)
-sm.put_u32(0)  // TX FIFO (when program PULLs)
+sm.put_u32(grb << 8)
 ```
 
 ```sh
-klin get github/klin-lang/machine_rp@v0.7.0
+klin get github/klin-lang/machine_rp@v0.8.0
 ```
 
 ## Shape (shared with other `machine_*`)
