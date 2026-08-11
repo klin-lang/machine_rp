@@ -11,12 +11,23 @@ fn test_pio_encode() {
     testing.assert_eq_i32(pio_encode_jmp(7), 7)
     testing.assert_eq_i32(pio_encode_jmp_not_x(3), 0x0023)
     testing.assert_eq_i32(pio_encode_out_x(1), 0x6021)
+    testing.assert_eq_i32(pio_encode_out_pins(1), 0x6001)
+    testing.assert_eq_i32(pio_encode_out_pins(8), 0x6008)
     testing.assert_eq_i32(pio_encode_delay(3), 0x0300)
     testing.assert_eq_i32(pio_encode_sideset(1, 1), 0x1000)
     // WS2812-style word at PC0: out x,1 side 0 [3]
     testing.assert_eq_i32(
         pio_encode_out_x(1) | pio_encode_sideset(1, 0) | pio_encode_delay(3),
         0x6321
+    )
+    // SPI TX bit: out pins,1 side 0 / nop side 1
+    testing.assert_eq_i32(
+        pio_encode_out_pins(1) | pio_encode_sideset(1, 0),
+        0x6001
+    )
+    testing.assert_eq_i32(
+        pio_encode_nop(0) | pio_encode_sideset(1, 1),
+        0xb042
     )
     testing.assert_eq_i32(pio_clkdiv_int(12000000, 8000000), 1)
     testing.assert_eq_i32(pio_clkdiv_frac(12000000, 8000000), 128)
@@ -26,5 +37,5 @@ fn test_pio_encode() {
 }
 
 fn test_version_pio() {
-    testing.assert_eq_i32(version(), 10)
+    testing.assert_eq_i32(version(), 11)
 }

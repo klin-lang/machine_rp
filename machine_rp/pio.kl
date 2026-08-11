@@ -197,6 +197,22 @@ pub fn pio_encode_out_x(count: i32): i32 {
     return 0x6000 | (1 << 5) | c
 }
 
+/// Encode `OUT pins, count` (`count` 1..=32; 32 → encoded 0). SPI MOSI TX uses this.
+pub fn pio_encode_out_pins(count: i32): i32 {
+    let mut c = count
+    if c < 1 {
+        c = 1
+    }
+    if c > 32 {
+        c = 32
+    }
+    if c == 32 {
+        c = 0
+    }
+    // OUT | dest=PINS(0) | count
+    return 0x6000 | c
+}
+
 /// Delay field bits to OR into an instruction (`cycles` 0..=31; less if sideset used).
 pub fn pio_encode_delay(cycles: i32): i32 {
     let mut d = cycles
@@ -428,6 +444,55 @@ pub fn (p: Pio) put_u32(v: i32) {
     while (*(p.fstat) & (bit << 16)) != 0 {
     }
     *(p.txf) = v
+}
+
+/// Push one byte (left-justified in TXF for shift-left / autopull-8).
+pub fn (p: Pio) put_u8(v: i32) {
+    p.put_u32((v & 255) << 24)
+}
+
+/// Address of this SM's TX FIFO (byte view for DMA `start_to_peri`).
+pub fn (p: Pio) txf_u8(): *mut volatile u8 {
+    return cast(*mut volatile u8, p.base + 0x10 + p.sm * 4)
+}
+
+/// Wait until the SM stalls on an empty TX FIFO (`FDEBUG.TXSTALL`).
+/// Call after DMA/FIFO TX before raising CS so the last bit shifts out.
+pub fn (p: Pio) wait_tx_stall() {
+    let fdebug = cast(*mut volatile i32, p.base + 0x08)
+    let bit = 1 << p.sm
+    // WC: write 1 clears sticky TXSTALL, then wait until stall again.
+    *fdebug = bit
+    while (*fdebug & bit) == 0 {
+    }
+}
+
+/// Blocking DMA TX of `buf` paced by PIO TX DREQ; waits for TX stall after DMA.
+pub fn (p: Pio) write_dma(d: Dma, buf: []u8, dreq: i32) {
+    if buf.len < 1 {
+        return
+    }
+    let src = cast(*u8, &buf[0])
+    let dst = cast(*u8, p.txf_u8())
+    d.start_to_peri(src, dst, buf.len, dreq, 1, 0)
+    d.wait()
+    p.wait_tx_stall()
+}
+
+/// Blocking DMA TX of a 2-byte pattern repeated `nbytes` times (read ring size 2).
+pub fn (p: Pio) write_dma_repeat2(d: Dma, b0: i32, b1: i32, nbytes: i32, dreq: i32) {
+    if nbytes < 1 {
+        return
+    }
+    let mut pat: [2]u8
+    let word = (b0 & 255) | ((b1 & 255) << 8)
+    let pp = cast(*mut i32, &pat[0])
+    *pp = word
+    let src = cast(*u8, &pat[0])
+    let dst = cast(*u8, p.txf_u8())
+    d.start_to_peri(src, dst, nbytes, dreq, 1, 1)
+    d.wait()
+    p.wait_tx_stall()
 }
 
 /// Pop one word from RX FIFO (blocks while empty).
