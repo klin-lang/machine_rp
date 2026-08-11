@@ -1,0 +1,66 @@
+/// RP2350 USB device CDC ACM (polling). Implementation in `usb_cdc_rp.c`.
+/// Caller must enable **clk_usb @ 48 MHz** before `usb_cdc_out_rp2350`.
+module machine_rp
+
+@[link("usb_cdc_rp.c")]
+@[cimport, codename("klin_usb_cdc_init")]
+fn klin_usb_cdc_init()
+
+@[cimport, codename("klin_usb_cdc_poll")]
+fn klin_usb_cdc_poll()
+
+@[cimport, codename("klin_usb_cdc_configured")]
+fn klin_usb_cdc_configured(): i32
+
+@[cimport, codename("klin_usb_cdc_write_u8")]
+fn klin_usb_cdc_write_u8(b: i32): i32
+
+@[cimport, codename("klin_usb_cdc_try_read_u8")]
+fn klin_usb_cdc_try_read_u8(): i32
+
+@[cimport, codename("klin_usb_cdc_any")]
+fn klin_usb_cdc_any(): i32
+
+@[cimport, codename("klin_usb_cdc_deinit")]
+fn klin_usb_cdc_deinit()
+
+/// Opaque handle — state lives in the C driver (single device).
+pub struct UsbCdc {
+    ready: i32
+}
+
+/// Claim the USB device CDC stack. Requires clk_usb already at 48 MHz.
+pub fn usb_cdc_out_rp2350(): UsbCdc {
+    klin_usb_cdc_init()
+    return UsbCdc{ ready: 1 }
+}
+
+pub fn (u: UsbCdc) poll() {
+    let _k = u.ready * 0
+    klin_usb_cdc_poll()
+}
+
+pub fn (u: UsbCdc) configured(): bool {
+    let _k = u.ready * 0
+    return klin_usb_cdc_configured() != 0
+}
+
+pub fn (u: UsbCdc) write_u8(b: i32): bool {
+    let _k = u.ready * 0
+    return klin_usb_cdc_write_u8(b & 255) != 0
+}
+
+pub fn (u: UsbCdc) try_read_u8(): i32 {
+    let _k = u.ready * 0
+    return klin_usb_cdc_try_read_u8()
+}
+
+pub fn (u: UsbCdc) any(): bool {
+    let _k = u.ready * 0
+    return klin_usb_cdc_any() != 0
+}
+
+pub fn (u: UsbCdc) deinit() {
+    let _k = u.ready * 0
+    klin_usb_cdc_deinit()
+}
