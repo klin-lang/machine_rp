@@ -9,6 +9,8 @@ pub struct Spi {
     dr_u8: *mut volatile u8
     sr: *mut volatile i32
     cpsr: *mut volatile i32
+    dmacr: *mut volatile i32
+    icr: *mut volatile i32
 }
 
 fn spi_base_rp2040(spi: i32): i32 {
@@ -83,6 +85,8 @@ fn spi_from_base(base: i32, peri_clk_hz: i32, baud_hz: i32, mode: i32): Spi {
     let dr_u8 = cast(*mut volatile u8, base + 0x08)
     let sr = cast(*mut volatile i32, base + 0x0C)
     let cpsr = cast(*mut volatile i32, base + 0x10)
+    let icr = cast(*mut volatile i32, base + 0x20)
+    let dmacr = cast(*mut volatile i32, base + 0x24)
 
     *cr1 = 0
     *cpsr = spi_cpsr(peri_clk_hz, baud_hz)
@@ -95,10 +99,21 @@ fn spi_from_base(base: i32, peri_clk_hz: i32, baud_hz: i32, mode: i32): Spi {
     }
     // DSS=7 (8-bit), SPO/SPH from mode, SCR=0
     *cr0 = 7 | ((m & 3) << 6)
+    // TXDMAE — RX DMA off (TX-only paths drain RX after)
+    *dmacr = 1 << 1
     // SSE | master (MS=0)
     *cr1 = 1 << 1
 
-    return Spi{ cr0: cr0, cr1: cr1, dr: dr, dr_u8: dr_u8, sr: sr, cpsr: cpsr }
+    return Spi{
+        cr0: cr0,
+        cr1: cr1,
+        dr: dr,
+        dr_u8: dr_u8,
+        sr: sr,
+        cpsr: cpsr,
+        dmacr: dmacr,
+        icr: icr
+    }
 }
 
 /// RP2040: SPI `spi` (0/1), SCK/MOSI/MISO FUNCSEL 1. Pico SPI0 often GP18/19/16.
@@ -194,6 +209,51 @@ pub fn (s: Spi) write_readinto(wbuf: []u8, rbuf: []u8) {
     }
 }
 
+/// Drain RX FIFO + clear overrun (after TX-only DMA). Waits for BSY clear.
+pub fn (s: Spi) drain_rx() {
+    while (*(s.sr) & 1) != 0 {
+        let _b = *(s.dr)
+    }
+    // BSY
+    while (*(s.sr) & (1 << 4)) != 0 {
+    }
+    while (*(s.sr) & 1) != 0 {
+        let _b2 = *(s.dr)
+    }
+    // RORIC
+    *(s.icr) = 1
+}
+
+/// Blocking DMA TX of `buf` paced by `dreq` (e.g. `dma_dreq_spi1_tx_rp2350()`).
+pub fn (s: Spi) write_dma(d: Dma, buf: []u8, dreq: i32) {
+    if buf.len < 1 {
+        return
+    }
+    let src = cast(*u8, &buf[0])
+    let dst = cast(*u8, s.dr_u8)
+    d.start_to_peri(src, dst, buf.len, dreq, 1, 0)
+    d.wait()
+    s.drain_rx()
+}
+
+/// Blocking DMA TX of a 2-byte pattern repeated `nbytes` times (ring size 2).
+/// Used for solid RGB565 fills (`lo` then `hi` per pixel).
+pub fn (s: Spi) write_dma_repeat2(d: Dma, b0: i32, b1: i32, nbytes: i32, dreq: i32) {
+    if nbytes < 1 {
+        return
+    }
+    let mut pat: [2]u8
+    let word = (b0 & 255) | ((b1 & 255) << 8)
+    let p = cast(*mut i32, &pat[0])
+    *p = word
+    let src = cast(*u8, &pat[0])
+    let dst = cast(*u8, s.dr_u8)
+    d.start_to_peri(src, dst, nbytes, dreq, 1, 1)
+    d.wait()
+    s.drain_rx()
+}
+
 pub fn (s: Spi) deinit() {
+    *(s.dmacr) = 0
     *(s.cr1) = 0
 }

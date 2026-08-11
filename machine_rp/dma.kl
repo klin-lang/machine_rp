@@ -1,0 +1,184 @@
+/// RP2040 / RP2350 DMA channel (MMIO). Explicit claim — no allocator, no IRQ.
+/// CTRL bitfields differ between chips; use `dma_out` vs `dma_out_rp2350`.
+module machine_rp
+
+pub struct Dma {
+    read_addr: *mut volatile *u8
+    write_addr: *mut volatile *u8
+    trans_count: *mut volatile i32
+    ctrl_trig: *mut volatile i32
+    ch: i32
+    is_rp2350: i32
+}
+
+fn dma_base(): i32 {
+    return 0x50000000
+}
+
+fn dma_ch_base(ch: i32): i32 {
+    let mut c = ch
+    if c < 0 {
+        c = 0
+    }
+    if c > 15 {
+        c = 15
+    }
+    return dma_base() + c * 0x40
+}
+
+fn ensure_dma_rp2040() {
+    ensure_gpio_clocks()
+    // RESETS DMA bit 2
+    let reset_clr = cast(*mut volatile i32, 0x4000f000)
+    *reset_clr = 1 << 2
+    let done = cast(*mut volatile i32, 0x4000c008)
+    let need = 1 << 2
+    while (*done & need) != need {
+    }
+}
+
+fn ensure_dma_rp2350() {
+    ensure_gpio_clocks_rp2350()
+    // RESETS DMA bit 2
+    let reset_clr = cast(*mut volatile i32, 0x40023000)
+    *reset_clr = 1 << 2
+    let done = cast(*mut volatile i32, 0x40020008)
+    let need = 1 << 2
+    while (*done & need) != need {
+    }
+}
+
+fn dma_from_ch(ch: i32, is_rp2350: i32): Dma {
+    let mut c = ch
+    if c < 0 {
+        c = 0
+    }
+    if c > 15 {
+        c = 15
+    }
+    let base = dma_ch_base(c)
+    return Dma{
+        read_addr: cast(*mut volatile *u8, base),
+        write_addr: cast(*mut volatile *u8, base + 0x04),
+        trans_count: cast(*mut volatile i32, base + 0x08),
+        ctrl_trig: cast(*mut volatile i32, base + 0x0C),
+        ch: c,
+        is_rp2350: is_rp2350
+    }
+}
+
+/// RP2040: claim DMA channel `ch` (0..=15). Does not start a transfer.
+pub fn dma_out(ch: i32): Dma {
+    ensure_dma_rp2040()
+    return dma_from_ch(ch, 0)
+}
+
+/// RP2350: claim DMA channel `ch` (0..=15). Does not start a transfer.
+pub fn dma_out_rp2350(ch: i32): Dma {
+    ensure_dma_rp2350()
+    return dma_from_ch(ch, 1)
+}
+
+pub fn dma_dreq_spi0_tx(): i32 {
+    return 16
+}
+
+pub fn dma_dreq_spi1_tx(): i32 {
+    return 18
+}
+
+pub fn dma_dreq_spi0_tx_rp2350(): i32 {
+    return 24
+}
+
+pub fn dma_dreq_spi1_tx_rp2350(): i32 {
+    return 26
+}
+
+/// CTRL for byte TX to a peripheral FIFO: optional read-increment + optional
+/// read ring (`ring_bits`: 0 = none, 1 = 2-byte wrap, …). `CHAIN_TO` = self.
+pub fn dma_ctrl_byte_tx(
+    ch: i32,
+    dreq: i32,
+    incr_read: i32,
+    ring_bits: i32,
+    is_rp2350: i32
+): i32 {
+    let mut c = ch
+    if c < 0 {
+        c = 0
+    }
+    if c > 15 {
+        c = 15
+    }
+    let mut treq = dreq
+    if treq < 0 {
+        treq = 0
+    }
+    let mut ring = ring_bits
+    if ring < 0 {
+        ring = 0
+    }
+    if ring > 15 {
+        ring = 15
+    }
+    // EN | DATA_SIZE=byte | optional INCR_READ | CHAIN_TO=self | TREQ | IRQ_QUIET
+    let mut ctrl = 1
+    if incr_read != 0 {
+        ctrl = ctrl | (1 << 4)
+    }
+    if is_rp2350 != 0 {
+        if ring != 0 {
+            ctrl = ctrl | (ring << 8)
+        }
+        ctrl = ctrl | (c << 13)
+        ctrl = ctrl | ((treq & 63) << 17)
+        ctrl = ctrl | (1 << 23)
+    } else {
+        if ring != 0 {
+            ctrl = ctrl | (ring << 6)
+        }
+        ctrl = ctrl | (c << 11)
+        ctrl = ctrl | ((treq & 63) << 15)
+        ctrl = ctrl | (1 << 21)
+    }
+    return ctrl
+}
+
+pub fn (d: Dma) busy(): bool {
+    let mut mask = 1 << 24
+    if d.is_rp2350 != 0 {
+        mask = 1 << 26
+    }
+    return (*(d.ctrl_trig) & mask) != 0
+}
+
+pub fn (d: Dma) wait() {
+    while d.busy() {
+    }
+}
+
+/// Program + trigger: memory → peripheral (no write-increment).
+/// `ring_bits` 0 = linear buffer; 1 = wrap every 2 source bytes (solid color).
+pub fn (d: Dma) start_to_peri(
+    src: *u8,
+    dst: *u8,
+    count: i32,
+    dreq: i32,
+    incr_read: i32,
+    ring_bits: i32
+) {
+    let mut n = count
+    if n < 0 {
+        n = 0
+    }
+    *(d.ctrl_trig) = 0
+    *(d.read_addr) = src
+    *(d.write_addr) = dst
+    *(d.trans_count) = n
+    *(d.ctrl_trig) = dma_ctrl_byte_tx(d.ch, dreq, incr_read, ring_bits, d.is_rp2350)
+}
+
+pub fn (d: Dma) deinit() {
+    *(d.ctrl_trig) = 0
+}

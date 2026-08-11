@@ -26,5 +26,5 @@ fn test_pio_encode() {
 }
 
 fn test_version_pio() {
-    testing.assert_eq_i32(version(), 8)
+    testing.assert_eq_i32(version(), 9)
 }
